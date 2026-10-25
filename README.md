@@ -1,4 +1,4 @@
-# Mini Foss Store
+# BenStore
 
 一個**你自己說了算的 Android 開源應用商店**：從 F-Droid / IzzyOnDroid 倉庫抓 `index-v1.jar`，列出開源應用、顯示圖示與版本，下載 APK 並呼叫系統安裝器安裝。
 
@@ -8,24 +8,24 @@ Kotlin + Jetpack Compose，單模組、約 700 行，Push 到 GitHub 就由 Acti
 
 ## 一、30 秒開始
 
-1. 在 GitHub 新建一個空倉庫（例如 `mini-foss-store`），**不要**勾選 README / .gitignore。
+1. 在 GitHub 新建一個空倉庫（例如 `BenStore`），**不要**勾選 README / .gitignore。
 2. 把本專案所有檔案（含 `.github/`）上傳或 push 上去：
    ```bash
    git init
    git add .
-   git commit -m "init: mini foss store"
+   git commit -m "init: BenStore"
    git branch -M main
-   git remote add origin https://github.com/<你的帳號>/mini-foss-store.git
+   git remote add origin https://github.com/<你的帳號>/BenStore.git
    git push -u origin main
    ```
-3. 打開倉庫的 **Actions** 分頁 → 等 `Build APK` 跑完（約 5–10 分鐘）→ 點進去 → 在 **Artifacts** 下載 `mini-foss-store-apk`。
+3. 打開倉庫的 **Actions** 分頁 → 等 `Build APK` 跑完（約 5–10 分鐘）→ 點進去 → 在 **Artifacts** 下載 `benstore-apk`。
 
 解壓後有兩個檔案，裝任一個都可以：
 
 | 檔案 | 說明 |
 | --- | --- |
-| `mini-foss-store-release.apk` | 正式版，CI 自動簽名 |
-| `mini-foss-store-debug.apk` | 除錯版，含 debug 簽名 |
+| `benstore-release.apk` | 正式版，CI 自動簽名 |
+| `benstore-debug.apk` | 除錯版，含 debug 簽名 |
 
 > 第一次跑會比較慢（要下載 Gradle 與 Android 依賴），之後有快取就只要 2–3 分鐘。
 
@@ -40,18 +40,46 @@ Kotlin + Jetpack Compose，單模組、約 700 行，Push 到 GitHub 就由 Acti
 | 想改什麼 | 改哪裡 |
 | --- | --- |
 | 應用名稱 | `app/src/main/res/values/strings.xml` 的 `app_name` |
-| 包名（決定能不能跟別的 App 共存） | `app/build.gradle.kts` 的 `applicationId`，同步改 `AndroidManifest` 不用動（用了 `${applicationId}`） |
+| 包名（決定能不能跟別的 App 共存） | `app/build.gradle.kts` 的 `applicationId`（目前是 `com.benstore.app`），同步改 `AndroidManifest` 不用動（用了 `${applicationId}`） |
 | 預設倉庫 | `RepoStore.kt` 的 `DEFAULT_REPO`，或畫面上方的 F-Droid / IzzyOnDroid 切換 |
 | 加更多倉庫 | `StoreScreen.kt` 的 `PRESET_REPOS` 清單，例如 `https://guardianproject.info/fdroid/repo` |
 | 版本號 | `app/build.gradle.kts` 的 `versionCode` / `versionName` |
-| 圖示 | 換掉 `app/src/main/res/mipmap-*/ic_launcher.png` |
+| 圖示 | 見下方「圖示規格」 |
+
+## 圖示規格
+
+Logo 是那隻方塊機器人，已做成**標準 Android 自適應圖示**（Adaptive Icon），自動適配各家啟動器的圓形／圓角方形／超橢圓遮罩：
+
+```
+res/
+├── mipmap-anydpi-v26/
+│   ├── ic_launcher.xml              # 自適應圖示（API 26+ 優先使用）
+│   └── ic_launcher_round.xml
+├── drawable-nodpi/
+│   ├── ic_launcher_background.png   # 彩虹漸變底 432×432
+│   └── ic_launcher_foreground.png   # 機器人（去背 + 白描邊）432×432
+└── mipmap-mdpi…xxxhdpi/
+    └── ic_launcher.png              # 舊啟動器／通知用的合成圖
+art/
+├── logo_original.jpg                # 原始 logo 備份
+├── ic_launcher_playstore.png        # 512×512（上架用）
+└── icon_preview.png                 # 三種遮罩下的預覽
+```
+
+設計要點：
+
+- **去背**：原圖背景是橫向彩虹漸變，按「每一列的背景色」建模後把機器人從中分離，保留原有的粗黑輪廓與積木配色。
+- **白描邊**：機器人本身是黃頭／紅身／藍腿，直接壓在彩虹底上對比度不夠，所以加了一圈約 1.5dp 的白色描邊，任何背景色上都看得清。
+- **安全區**：機器人身高設為 72dp（自適應圖示畫布 108dp），正好落在官方的 72dp 可視區內，圓形遮罩也不會切到頭頂或腳底。
+
+想換 logo：直接替換 `art/logo_original.jpg` 後重跑 `python3 make_icons.py`（腳本在專案根目錄），就會重新產出整套圖示。
 
 ## 四、用自己的簽名金鑰（重要）
 
 CI 預設會自動產生一把「測試金鑰」。測試金鑰每次跑 Actions 都不同，**換機器後無法直接覆蓋升級**。要長期用，請：
 
 ```bash
-keytool -genkeypair -v -keystore my-release.jks -alias mini \
+keytool -genkeypair -v -keystore my-release.jks -alias benstore \
   -keyalg RSA -keysize 2048 -validity 10950
 base64 -w 0 my-release.jks > my-release.jks.b64
 ```

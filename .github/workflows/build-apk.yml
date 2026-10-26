@@ -23,26 +23,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
-      - name: Set up Gradle
+      - name: Set up Gradle 8.7
         run: |
-          if [ -f gradlew ]; then
-            chmod +x ./gradlew
-          else
-            curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
-            sudo unzip -q /tmp/gradle.zip -d /opt
-            echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
-          fi
+          set -e
+          # 專案沒有內建 gradlew wrapper，直接用官方發行版，行為最穩定
+          curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          sudo unzip -q -o /tmp/gradle.zip -d /opt
+          sudo ln -sf /opt/gradle-8.7/bin/gradle /usr/local/bin/gradle
+          gradle --version
 
-      - name: Build Debug + Release
-        run: |
-          if [ -f gradlew ]; then
-            ./gradlew assembleDebug assembleRelease --no-daemon
-          else
-            gradle assembleDebug assembleRelease --no-daemon
-          fi
-
+      # 必須在 Build 之前：Gradle 會讀這些環境變數直接簽名
       - name: Prepare signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -56,8 +47,9 @@ jobs:
             echo "KS_ALIAS=${KEYSTORE_ALIAS:-benstore}" >> "$GITHUB_ENV"
             echo "KS_STORE_PASS=${KEYSTORE_STORE_PASSWORD:-android}" >> "$GITHUB_ENV"
             echo "KS_KEY_PASS=${KEYSTORE_KEY_PASSWORD:-android}" >> "$GITHUB_ENV"
+            echo "::notice::使用倉庫 secret 中的簽名金鑰"
           else
-            echo "::notice::沒有設定 KEYSTORE_BASE64，改用 CI 自動產生的測試簽名金鑰"
+            echo "::warning::未設定 KEYSTORE_BASE64，改用 CI 自動產生的測試金鑰（每次不同，無法覆蓋升級）"
             keytool -genkeypair -v \
               -keystore "$RUNNER_TEMP/keystore.jks" \
               -alias benstore -keyalg RSA -keysize 2048 -validity 10950 \
@@ -68,28 +60,94 @@ jobs:
             echo "KS_STORE_PASS=android" >> "$GITHUB_ENV"
             echo "KS_KEY_PASS=android" >> "$GITHUB_ENV"
           fi
+          ls -l "$RUNNER_TEMP/keystore.jks"
+
+      - name: Build Debug + Release
+        run: |
+          set -e
+          if [ -x ./gradlew ]; then
+            GRADLE_BIN=./gradlew
+          else
+            GRADLE_BIN=gradle
+          fi
+          echo "使用: $GRADLE_BIN"
+          "$GRADLE_BIN" assembleDebug assembleRelease --no-daemon --stacktrace
+
+      # 檔名會依「有沒有簽名」而不同，所以自動偵測，不寫死。
+      - name: Locate built APKs
+        id: locate
+        run: |
+          set -e
+          echo "===== app/build/outputs/apk 實際內容 ====="
+          find app/build/outputs/apk -type f 2>/dev/null | sort
+          echo "=========================================="
+
+          REL_DIR=app/build/outputs/apk/release
+          DBG_DIR=app/build/outputs/apk/debug
+
+          REL=""
+          for cand in app-release.apk app-release-unsigned.apk; do
+            [ -f "$REL_DIR/$cand" ] && { REL="$REL_DIR/$cand"; break; }
+          done
+          if [ -z "$REL" ]; then
+            REL=$(find "$REL_DIR" -maxdepth 1 -name '*.apk' ! -name '*-signed.apk' 2>/dev/null | sort | head -1)
+          fi
+          if [ -z "$REL" ]; then
+            echo "::error::release 目錄裡找不到 APK，傾整棵樹做診斷"
+            find . -name '*.apk' -type f 2>/dev/null | sort | head -50
+            echo "release 目錄清單："; ls -la "$REL_DIR" 2>/dev/null || echo "(不存在)"
+            exit 1
+          fi
+
+          DBG=""
+          [ -f "$DBG_DIR/app-debug.apk" ] && DBG="$DBG_DIR/app-debug.apk"
+          [ -z "$DBG" ] && DBG=$(find "$DBG_DIR" -maxdepth 1 -name '*.apk' 2>/dev/null | sort | head -1)
+
+          echo "release_apk=$REL" >> "$GITHUB_OUTPUT"
+          echo "debug_apk=$DBG"   >> "$GITHUB_OUTPUT"
+          echo "release APK => $REL"
+          echo "debug   APK => ${DBG:-(無)}"
 
       - name: Sign & verify release APK
+        env:
+          REL: ${{ steps.locate.outputs.release_apk }}
         run: |
-          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          APKSIGNER=$(find "$SDK/build-tools" -name apksigner -type f | sort | tail -1)
+          set -e
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+          echo "SDK=$SDK"
+          APKSIGNER=$(find "$SDK/build-tools" -name apksigner -type f 2>/dev/null | sort | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::找不到 apksigner，請確認 build-tools 已安裝"
+            ls -la "$SDK/build-tools" 2>/dev/null || true
+            exit 1
+          fi
           echo "apksigner: $APKSIGNER"
-          cd app/build/outputs/apk/release
+          OUT=app/build/outputs/apk/release/benstore-release-signed.apk
+          # Gradle 已簽名的話這裡會再簽一次，金鑰相同，結果一樣可用
           "$APKSIGNER" sign --ks "$KS_FILE" --ks-key-alias "$KS_ALIAS" \
             --ks-pass "pass:$KS_STORE_PASS" --key-pass "pass:$KS_KEY_PASS" \
-            --out benstore-release-signed.apk app-release.apk
-          "$APKSIGNER" verify benstore-release-signed.apk
+            --out "$OUT" "$REL"
+          "$APKSIGNER" verify --print-certs "$OUT"
 
       - name: Collect APKs
+        env:
+          DBG: ${{ steps.locate.outputs.debug_apk }}
         run: |
+          set -e
           mkdir -p dist
           cp app/build/outputs/apk/release/benstore-release-signed.apk dist/benstore-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk dist/benstore-debug.apk
-          ls -lh dist
+          if [ -n "$DBG" ] && [ -f "$DBG" ]; then
+            cp "$DBG" dist/benstore-debug.apk
+          fi
+          cd dist && sha256sum *.apk > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: benstore-apk
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
           retention-days: 30

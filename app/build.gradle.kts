@@ -16,9 +16,27 @@ android {
         versionName = "1.0.0"
     }
 
+    // CI 會透過環境變數（KS_FILE / KS_STORE_PASS / KS_ALIAS / KS_KEY_PASS）
+    // 提供簽名金鑰；有的話 Gradle 就直接產出已簽名的 app-release.apk，
+    // 沒有的話產出 app-release-unsigned.apk，再由 workflow 用 apksigner 補簽。
+    signingConfigs {
+        create("ci") {
+            val ks = System.getenv("KS_FILE")
+            if (!ks.isNullOrBlank()) {
+                storeFile = file(ks)
+                storePassword = System.getenv("KS_STORE_PASS")
+                keyAlias = System.getenv("KS_ALIAS")
+                keyPassword = System.getenv("KS_KEY_PASS")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (!System.getenv("KS_FILE").isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("ci")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

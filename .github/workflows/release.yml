@@ -1,0 +1,199 @@
+name: Release
+
+# 全程在 GitHub 網頁操作：Actions → Release → Run workflow → 填版本號 → 完成。
+# 不需要本機 git tag、不需要 Android Studio、不需要打任何指令。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '版本標籤 / Release tag'
+        required: true
+        default: 'v1.0.0'
+      prerelease:
+        description: '標記為預發布 / Mark as pre-release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Bump → Build → Sign → Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x ./gradlew
+          else
+            curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+            sudo unzip -q /tmp/gradle.zip -d /opt
+            echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
+          fi
+
+      # ---------- 1. 版本號同步到 build.gradle.kts ----------
+      - name: Bump version
+        id: bump
+        env:
+          TAG: ${{ inputs.tag }}
+          RUN_NUM: ${{ github.run_number }}
+        run: |
+          set -e
+          ver="${TAG#v}"
+          file=app/build.gradle.kts
+          sed -i "s/versionCode = [0-9]*/versionCode = ${RUN_NUM}/" "$file"
+          sed -i "s/versionName = \"[^\"]*\"/versionName = \"${ver}\"/" "$file"
+          echo "已設定 versionName=${ver} versionCode=${RUN_NUM}"
+          grep -n "versionName\|versionCode" "$file"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add app/build.gradle.kts
+            git commit -m "chore: bump version to ${TAG}"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          else
+            echo "版本號沒有變動，略過 commit"
+          fi
+
+      # ---------- 2. 編譯 ----------
+      - name: Build Debug + Release
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug assembleRelease --no-daemon
+          else
+            gradle assembleDebug assembleRelease --no-daemon
+          fi
+
+      # ---------- 3. 簽名 ----------
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          KEYSTORE_KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+            echo "KS_FILE=$RUNNER_TEMP/keystore.jks" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=${KEYSTORE_ALIAS:-benstore}" >> "$GITHUB_ENV"
+            echo "KS_STORE_PASS=${KEYSTORE_STORE_PASSWORD:-android}" >> "$GITHUB_ENV"
+            echo "KS_KEY_PASS=${KEYSTORE_KEY_PASSWORD:-android}" >> "$GITHUB_ENV"
+            echo "::notice::使用倉庫 secret 中的簽名金鑰"
+          else
+            echo "::warning::未設定 KEYSTORE_BASE64，改用 CI 自動產生的測試金鑰（每次不同，無法覆蓋升級）"
+            keytool -genkeypair -v \
+              -keystore "$RUNNER_TEMP/keystore.jks" \
+              -alias benstore -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass android -keypass android \
+              -dname "CN=BenStore, O=OpenSource, C=HK"
+            echo "KS_FILE=$RUNNER_TEMP/keystore.jks" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=benstore" >> "$GITHUB_ENV"
+            echo "KS_STORE_PASS=android" >> "$GITHUB_ENV"
+            echo "KS_KEY_PASS=android" >> "$GITHUB_ENV"
+          fi
+
+      - name: Sign & verify release APK
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER=$(find "$SDK/build-tools" -name apksigner -type f | sort | tail -1)
+          echo "apksigner: $APKSIGNER"
+          cd app/build/outputs/apk/release
+          "$APKSIGNER" sign --ks "$KS_FILE" --ks-key-alias "$KS_ALIAS" \
+            --ks-pass "pass:$KS_STORE_PASS" --key-pass "pass:$KS_KEY_PASS" \
+            --out benstore-release-signed.apk app-release.apk
+          "$APKSIGNER" verify benstore-release-signed.apk
+
+      # ---------- 4. 收集產物 + 產生校驗值 ----------
+      - name: Collect APKs and checksums
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/benstore-release-signed.apk dist/benstore-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk           dist/benstore-debug.apk
+          cd dist
+          sha256sum *.apk > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      - name: Build release body
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -e
+          body="$RUNNER_TEMP/body.md"
+          notes="RELEASE_NOTES_${TAG}.md"
+          if [ -f "$notes" ]; then
+            cat "$notes" > "$body"
+          else
+            echo "# BenStore ${TAG}" > "$body"
+            echo "" >> "$body"
+            echo "_(沒有找到 \`${notes}\`，以下是 commit 摘要)_" >> "$body"
+            echo "" >> "$body"
+          fi
+          {
+            echo ""
+            echo "## 校驗值 / Checksums"
+            echo ""
+            echo "| 檔案 / File | SHA-256 |"
+            echo "| --- | --- |"
+          } >> "$body"
+          while read -r sum file; do
+            echo "| \`$file\` | \`$sum\` |" >> "$body"
+          done < dist/SHA256SUMS.txt
+          {
+            echo ""
+            echo "驗證 / Verify: \`sha256sum -c SHA256SUMS.txt\`"
+          } >> "$body"
+          echo "path=$body" >> "$GITHUB_OUTPUT"
+        id: body
+
+      # ---------- 5. 建 tag ----------
+      - name: Create and push tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::warning::tag $TAG 已存在，將更新該 Release"
+          elif git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "::warning::遠端已有 tag $TAG，將更新該 Release"
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "BenStore ${TAG}"
+            git push origin "$TAG"
+            echo "已建立 tag $TAG"
+          fi
+
+      # ---------- 6. 發布 ----------
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: BenStore ${{ inputs.tag }}
+          body_path: ${{ steps.body.outputs.path }}
+          files: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+          prerelease: ${{ inputs.prerelease }}
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

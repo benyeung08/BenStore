@@ -1,0 +1,95 @@
+name: Build APK
+
+# 每次 push / PR 的例行建置：只產出 APK 當作 Artifact，不發布。
+# 要發正式版本請用另一個 workflow：Actions → Release → Run workflow。
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Sign APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x ./gradlew
+          else
+            curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+            sudo unzip -q /tmp/gradle.zip -d /opt
+            echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Build Debug + Release
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug assembleRelease --no-daemon
+          else
+            gradle assembleDebug assembleRelease --no-daemon
+          fi
+
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          KEYSTORE_KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+            echo "KS_FILE=$RUNNER_TEMP/keystore.jks" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=${KEYSTORE_ALIAS:-benstore}" >> "$GITHUB_ENV"
+            echo "KS_STORE_PASS=${KEYSTORE_STORE_PASSWORD:-android}" >> "$GITHUB_ENV"
+            echo "KS_KEY_PASS=${KEYSTORE_KEY_PASSWORD:-android}" >> "$GITHUB_ENV"
+          else
+            echo "::notice::沒有設定 KEYSTORE_BASE64，改用 CI 自動產生的測試簽名金鑰"
+            keytool -genkeypair -v \
+              -keystore "$RUNNER_TEMP/keystore.jks" \
+              -alias benstore -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass android -keypass android \
+              -dname "CN=BenStore, O=OpenSource, C=HK"
+            echo "KS_FILE=$RUNNER_TEMP/keystore.jks" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=benstore" >> "$GITHUB_ENV"
+            echo "KS_STORE_PASS=android" >> "$GITHUB_ENV"
+            echo "KS_KEY_PASS=android" >> "$GITHUB_ENV"
+          fi
+
+      - name: Sign & verify release APK
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER=$(find "$SDK/build-tools" -name apksigner -type f | sort | tail -1)
+          echo "apksigner: $APKSIGNER"
+          cd app/build/outputs/apk/release
+          "$APKSIGNER" sign --ks "$KS_FILE" --ks-key-alias "$KS_ALIAS" \
+            --ks-pass "pass:$KS_STORE_PASS" --key-pass "pass:$KS_KEY_PASS" \
+            --out benstore-release-signed.apk app-release.apk
+          "$APKSIGNER" verify benstore-release-signed.apk
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/benstore-release-signed.apk dist/benstore-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/benstore-debug.apk
+          ls -lh dist
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benstore-apk
+          path: dist/*.apk
+          retention-days: 30

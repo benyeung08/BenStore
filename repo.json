@@ -1,0 +1,124 @@
+{
+  "meta": {
+    "name": "BenStore",
+    "updated": 1730000000000
+  },
+  "apps": [
+    {
+      "packageName": "org.mozilla.fenix",
+      "name": "Firefox",
+      "summary": "隱私優先的開源瀏覽器",
+      "description": "Mozilla 推出的行動瀏覽器，支援多數桌面版擴充套件。\n以追蹤防護與同步功能著稱。",
+      "icon": "https://raw.githubusercontent.com/mozilla-mobile/firefox-android/main/fenix/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "categories": [
+        "網路",
+        "隱私"
+      ],
+      "author": "Mozilla",
+      "license": "MPL-2.0",
+      "webSite": "https://www.mozilla.org/firefox/",
+      "sourceCode": "https://github.com/mozilla-mobile/firefox-android",
+      "versions": [
+        {
+          "versionName": "範例版本號",
+          "versionCode": 1,
+          "url": "https://example.com/把這裡換成真正的APK下載連結.apk",
+          "size": 0,
+          "minSdk": 26,
+          "sha256": ""
+        }
+      ]
+    },
+    {
+      "packageName": "com.example.private",
+      "name": "內部工具（私有範例）",
+      "summary": "需要登入 GitHub 才能下載",
+      "description": "這個應用的 APK 放在私有倉庫的 Release 裡。\n用 githubAsset 指定位置，BenStore 會帶 token 透過 API 下載。",
+      "icon": "",
+      "categories": [
+        "內部"
+      ],
+      "author": "你的團隊",
+      "license": "Proprietary",
+      "webSite": "",
+      "sourceCode": "",
+      "versions": [
+        {
+          "versionName": "0.9.0",
+          "versionCode": 90,
+          "url": "",
+          "size": 0,
+          "minSdk": 26,
+          "sha256": "",
+          "requiresAuth": true,
+          "githubAsset": {
+            "owner": "<owner>",
+            "repo": "<repo>",
+            "assetId": 123456789
+          }
+        }
+      ]
+    },
+    {
+      "packageName": "com.benstore.internal.tool",
+      "name": "內部工具（僅限特定帳號）",
+      "summary": "示範 allowedEmails：只有列出的帳號看得到",
+      "description": "每個應用都可加 allowedEmails 陣列。\n留空或省略 = 所有已授權帳號都看得到；\n有填 = 只有列出的 email 看得到。",
+      "icon": "",
+      "categories": [
+        "內部"
+      ],
+      "author": "Ben",
+      "license": "Proprietary",
+      "webSite": "",
+      "sourceCode": "",
+      "allowedEmails": [
+        "you@gmail.com",
+        "github:your-github-id"
+      ],
+      "versions": [
+        {
+          "versionName": "1.0.0",
+          "versionCode": 1,
+          "url": "https://example.com/internal.apk",
+          "size": 0,
+          "minSdk": 26,
+          "sha256": ""
+        }
+      ]
+    },
+    {
+      "packageName": "com.example.internal",
+      "name": "內部工具（私有）",
+      "summary": "只有持有存取碼的人看得到",
+      "description": "這個應用示範私有分發：repo.json 是公開的，但沒有存取碼的人連列表都看不到它。",
+      "icon": "",
+      "categories": [
+        "內部"
+      ],
+      "author": "Ben",
+      "license": "Proprietary",
+      "requiredTiers": [
+        "beta"
+      ],
+      "versions": [
+        {
+          "versionName": "1.0.0",
+          "versionCode": 1,
+          "url": "https://example.com/internal-1.0.0.apk",
+          "size": 0,
+          "minSdk": 26,
+          "sha256": ""
+        }
+      ]
+    }
+  ],
+  "tiers": {
+    "beta": {
+      "label": "測試組",
+      "hashes": [
+        "REPLACE_WITH_SHA256_FROM_gen_access_code.py"
+      ]
+    }
+  }
+}

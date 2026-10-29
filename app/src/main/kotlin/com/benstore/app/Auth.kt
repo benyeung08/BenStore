@@ -60,9 +60,19 @@ object Auth {
     /** 本機商店帳號是否可用（裝置上已存在至少一組帳號） */
     fun localConfigured(context: Context): Boolean = LocalAuth.hasAccounts(context)
 
-    /** 門禁是否成立：公開模式下永遠是 false（不擋任何人） */
-    fun gateEnabled(context: Context): Boolean =
-        !isPublic() && (googleConfigured() || githubConfigured(context) || localConfigured(context))
+    /** 目前有任何一種可用的登入方式嗎 */
+    fun anyProviderConfigured(context: Context): Boolean =
+        googleConfigured() || githubConfigured(context) || localConfigured(context)
+
+    /**
+     * 門禁是否成立：公開模式下永遠是 false（不擋任何人）。
+     *
+     * 非公開模式一律回 true —— **即使三種登入方式都沒設定也要擋**。
+     * 這樣才不會出現「以為關了門，其實沒關」的漏洞：
+     * 沒設定時使用者會停在 LockScreen，並可現場註冊 BenStore 本機帳號進入
+     * （本機帳號零設定，不需要任何 Client ID）。
+     */
+    fun gateEnabled(context: Context): Boolean = !isPublic()
 
     /** 是否依帳號分級顯示：公開模式下不分級，全部顯示 */
     fun tieringEnabled(): Boolean = !isPublic()

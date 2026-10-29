@@ -1299,17 +1299,19 @@ private fun AccountSection() {
             )
         }
     } else if (!googleOk && !githubOk) {
+        // 強制登入模式下仍然會擋：此時靠 BenStore 本機帳號進入
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
-                Text("尚未設定登入方式", style = MaterialTheme.typography.bodyLarge)
+                Text("尚未設定 Google / GitHub", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "沒設定就不會擋登入，商店照常可用。設定後才能依帳號分級顯示應用。",
+                    "目前以 BenStore 本機帳號做門禁（零設定，帳號只存在這支手機）。\n" +
+                        "想改用 Google / GitHub 登入，請設定 WEB_CLIENT_ID 或 GitHub Client ID 後重新編譯。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
-        return
+        Spacer(Modifier.height(8.dp))
     }
 
     val allowed = Auth.allowedEmails()

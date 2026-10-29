@@ -23,8 +23,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -56,6 +61,11 @@ fun LockScreen(onSignedIn: () -> Unit) {
 
     val googleOk = remember { Auth.googleConfigured() }
     val githubOk = remember { Auth.githubConfigured(context) }
+    val hasLocal = remember { LocalAuth.hasAccounts(context) }
+
+    // 三種 OAuth 都沒設定時，本機帳號是唯一出路，直接展開
+    var showLocal by remember { mutableStateOf(!googleOk && !githubOk) }
+    var isRegister by remember { mutableStateOf(false) }
 
     // ---------- Google ----------
     fun signInGoogle() {
@@ -101,6 +111,23 @@ fun LockScreen(onSignedIn: () -> Unit) {
             deviceCode = null
         }
         busy = false
+    }
+
+    // ---------- BenStore 本機帳號 ----------
+    // 零設定方案：不需要任何 Client ID，使用者現場註冊即可進入。
+    fun submitLocal(user: String, pass: String) {
+        busy = true
+        error = null
+        scope.launch {
+            val r = if (isRegister) {
+                LocalAuth.register(context, user, pass)
+            } else {
+                LocalAuth.login(context, user, pass)
+            }
+            r.onSuccess { onSignedIn() }
+                .onFailure { error = it.message ?: "登入失敗" }
+            busy = false
+        }
     }
 
     Column(
@@ -224,16 +251,41 @@ fun LockScreen(onSignedIn: () -> Unit) {
             if (!googleOk && !githubOk) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("尚未設定任何登入方式", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "尚未設定 Google / GitHub 登入",
+                            style = MaterialTheme.typography.titleSmall
+                        )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Google：到 Cloud Console 建「網頁應用程式」型別的 OAuth ID，" +
-                                "填進 build.gradle.kts 的 WEB_CLIENT_ID。\n\n" +
+                            "可以直接註冊 BenStore 本機帳號使用（不需任何設定）。\n" +
+                                "或由開發者設定後改用 Google / GitHub 登入：\n\n" +
+                                "Google：到 Cloud Console 建「網頁應用程式」型別的 OAuth ID，" +
+                                "填進 local.properties 的 WEB_CLIENT_ID。\n\n" +
                                 "GitHub：到 GitHub 註冊 OAuth App，在設定頁填入 Client ID。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+
+            // ---- BenStore 本機帳號（永遠可用，零設定）----
+            Spacer(Modifier.height(16.dp))
+            if (showLocal) {
+                LocalAccountForm(
+                    isRegister = isRegister,
+                    hasLocal = hasLocal,
+                    enabled = !busy,
+                    onSubmit = ::submitLocal,
+                    onToggleMode = { isRegister = !isRegister },
+                    onCancel = { showLocal = false }
+                )
+            } else {
+                TextButton(onClick = { showLocal = true }, enabled = !busy) {
+                    Text(
+                        if (hasLocal) "使用 BenStore 本機帳號登入"
+                        else "註冊 BenStore 本機帳號"
+                    )
                 }
             }
         }
@@ -262,6 +314,83 @@ fun LockScreen(onSignedIn: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+/**
+ * BenStore 本機帳號的登入 / 註冊表單。
+ *
+ * 這是「沒設定任何 OAuth」時唯一的入口，所以永遠顯示、永遠可用：
+ * 帳號與密碼只存在這支手機上（PBKDF2 雜湊 + Keystore 加密），不連任何伺服器。
+ */
+@Composable
+private fun LocalAccountForm(
+    isRegister: Boolean,
+    hasLocal: Boolean,
+    enabled: Boolean,
+    onSubmit: (String, String) -> Unit,
+    onToggleMode: () -> Unit,
+    onCancel: () -> Unit
+) {
+    var user by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                if (isRegister) "註冊本機帳號" else "本機帳號登入",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(10.dp))
+
+            OutlinedTextField(
+                value = user,
+                onValueChange = { user = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("帳號") },
+                placeholder = { Text("小寫英文、數字、底線，3–20 字元") },
+                singleLine = true,
+                enabled = enabled,
+                shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = pass,
+                onValueChange = { pass = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("密碼") },
+                singleLine = true,
+                enabled = enabled,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Button(
+                onClick = { onSubmit(user, pass) },
+                enabled = enabled && user.isNotBlank() && pass.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (isRegister) "註冊並進入" else "登入") }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                TextButton(onClick = onToggleMode, enabled = enabled) {
+                    Text(if (isRegister) "已有帳號，改登入" else "還沒有帳號，註冊一個")
+                }
+                if (hasLocal || isRegister) {
+                    TextButton(onClick = onCancel, enabled = enabled) { Text("收起") }
+                }
+            }
+
+            Text(
+                "帳號只存在這支手機上，換機不會同步，也沒有忘記密碼救援機制。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -296,7 +425,8 @@ fun NotAuthorizedScreen(account: Account, onSignOut: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(
             "BenStore 只開放給指定的帳號。請換一個帳號，或把這個帳號加進 " +
-                "build.gradle.kts 的 ALLOWED_EMAILS。",
+                "local.properties 的 ALLOWED_EMAILS 後重新編譯。\n" +
+                "本機帳號請寫「local:帳號名」或直接寫帳號名。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center

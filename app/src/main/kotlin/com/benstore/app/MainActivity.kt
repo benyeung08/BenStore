@@ -33,10 +33,12 @@ class MainActivity : ComponentActivity() {
                     Auth.current(this@MainActivity)
                 }
                 when {
-                    // 公開模式、或兩種登入都沒設定 → 不擋，直接進商店
+                    // 公開模式（PUBLIC_MODE = true）→ 不擋，直接進商店
                     !Auth.gateEnabled(this@MainActivity) ->
                         StoreApp(startTab = if (openUpdates) 1 else 0)
+                    // 沒登入 → 停在門禁畫面（Google / GitHub / 本機帳號 三選一）
                     account == null -> LockScreen { authTick++ }
+                    // 已登入但不在 ALLOWED_EMAILS 名單內
                     !Auth.isAuthorized(this@MainActivity) ->
                         NotAuthorizedScreen(account) { authTick++ }
                     else -> StoreApp(startTab = if (openUpdates) 1 else 0)

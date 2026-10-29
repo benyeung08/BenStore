@@ -38,16 +38,19 @@ android {
         applicationId = "com.benstore.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // ---- 公開模式（總開關）----
         // true  = 任何人都能用，不用登入，所有應用全部顯示（公開商店）
-        // false = 必須登入，且依 ALLOWED_EMAILS / allowedEmails 做門禁與分級
+        // false = 必須登入才能使用，且依 ALLOWED_EMAILS / allowedEmails 做門禁與分級
         //
         // 這個開關優先於下面所有登入設定：設成 true 時，
         // WEB_CLIENT_ID 與 ALLOWED_EMAILS 會被完全忽略。
-        buildConfigField("Boolean", "PUBLIC_MODE", "true")
+        //
+        // 目前設為 false（強制登入）。沒登入會停在 LockScreen，
+        // 可用 Google / GitHub / BenStore 本機帳號 三種方式之一進入。
+        buildConfigField("Boolean", "PUBLIC_MODE", "false")
 
         // ---- Google 帳號登入 ----
         // 值不寫死在這裡，改從外部注入（見檔案最下方的 sec() 函式）：

@@ -1,1 +1,1 @@
--keep class com.yuanbao.ministore.** { *; }
+-keep class com.benstore.app.** { *; }

@@ -86,6 +86,10 @@ object GoogleWebAuth {
             )
         val redirectUri = "http://127.0.0.1:$port"
 
+        // state 用來防止 CSRF：loopback 埠是任何本機程式都能連的，
+        // 若回呼時不比對 state，惡意程式可以先連上埠餵一個授權碼進來。
+        val state = randomUrlSafe(24)
+
         val authUri = Uri.parse(AUTH_URL).buildUpon()
             .appendQueryParameter("client_id", clientId)
             .appendQueryParameter("redirect_uri", redirectUri)
@@ -93,7 +97,7 @@ object GoogleWebAuth {
             .appendQueryParameter("scope", SCOPES)
             .appendQueryParameter("code_challenge", challenge)
             .appendQueryParameter("code_challenge_method", "S256")
-            .appendQueryParameter("state", randomUrlSafe(24))
+            .appendQueryParameter("state", state)
             .appendQueryParameter("access_type", "online")
             .appendQueryParameter("prompt", "select_account")
             .build()
@@ -110,10 +114,18 @@ object GoogleWebAuth {
         }
 
         // 等瀏覽器把授權碼導回來
-        val code = waitForRedirect(port)
-            ?: return@withContext Result.failure(
+        val (code, returnedState) = waitForRedirect(port)
+        if (code == null) {
+            return@withContext Result.failure(
                 IllegalStateException("沒有收到授權碼（逾時，或使用者取消）")
             )
+        }
+        // state 必須與發出去的一致，否則視為偽造的回呼
+        if (!returnedState.isNullOrBlank() && returnedState != state) {
+            return@withContext Result.failure(
+                IllegalStateException("登入中止：state 不匹配，疑似偽造的回呼請求")
+            )
+        }
 
         return@withContext try {
             val idToken = exchangeCode(code, verifier, redirectUri, clientId, clientSecret)
@@ -172,19 +184,19 @@ object GoogleWebAuth {
     }
 
     /** 接住瀏覽器導回的授權碼，並回一個簡單頁面給瀏覽器顯示 */
-    private fun waitForRedirect(port: Int): String? {
+    private fun waitForRedirect(port: Int): Pair<String?, String?> {
         val server = try {
             ServerSocket(port)
         } catch (t: Throwable) {
-            return null
+            return null to null
         }
         return try {
             server.soTimeout = TIMEOUT_MS
             val socket = server.accept()
             try {
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                val requestLine = reader.readLine() ?: return null
-                val path = requestLine.split(" ").getOrNull(1) ?: return null
+                val requestLine = reader.readLine() ?: return (null to null)
+                val path = requestLine.split(" ").getOrNull(1) ?: return (null to null)
 
                 val html = "<html><body style='font-family:sans-serif;text-align:center;" +
                     "padding:48px'><h2>登入完成</h2><p>可以回到 BenStore 了</p></body></html>"
@@ -205,13 +217,13 @@ object GoogleWebAuth {
                 uri.getQueryParameter("error")?.let {
                     throw IllegalStateException("Google 回傳錯誤：$it")
                 }
-                uri.getQueryParameter("code")
+                uri.getQueryParameter("code") to uri.getQueryParameter("state")
             } finally {
                 runCatching { socket.close() }
             }
         } catch (t: Throwable) {
             if (t is IllegalStateException) throw t
-            null
+            null to null
         } finally {
             runCatching { server.close() }
         }

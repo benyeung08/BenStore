@@ -78,6 +78,9 @@ object RepoStore {
                     (response.body ?: error("回應為空")).string()
                 }
             } catch (t: Throwable) {
+                // 協程被取消（例如使用者又換了一個資料源網址）時不能走快取回退，
+                // 否則取消掉的舊請求仍會把畫面更新成舊資料。
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 val cached = repoCache(context)
                 val fallback = if (cached.exists()) {
                     runCatching { parseRepo(cached.readText(), url) }.getOrNull()
@@ -95,6 +98,31 @@ object RepoStore {
             parsed
         }
 
+    /**
+     * 快取的圖示最長邊上限（px）。
+     * 應用圖示常見 512×512，ARGB_8888 一張就 1 MB；
+     * 記憶體快取 200 張原圖會吃掉 200 MB，滑久一點就 OOM。
+     * 列表顯示 44 dp、詳情顯示 72 dp（xxhdpi 約 216 px），
+     * 取 256 px 兼顧清晰度與記憶體：512 的圖示降為 1/4，約 256 KB/張。
+     */
+    private const val ICON_MAX_PX = 256
+
+    /** 先算 inSampleSize 再解碼，避免一次把整張原圖讀進記憶體 */
+    private fun decodeSampled(bytes: ByteArray, maxPx: Int): Bitmap? {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        val w = opts.outWidth
+        val h = opts.outHeight
+        if (w <= 0 || h <= 0) return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        var sample = 1
+        while (maxOf(w, h) / sample > maxPx) sample *= 2
+        val real = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, real)
+    }
+
     /** 先查記憶體，再查磁碟，最後才真的下載 */
     suspend fun loadIcon(context: Context, url: String): Bitmap? = withContext(Dispatchers.IO) {
         if (url.isBlank()) return@withContext null
@@ -103,9 +131,12 @@ object RepoStore {
 
         val file = File(iconDir(context), md5(url) + ".icon")
         if (file.exists() && file.length() > 0L) {
-            BitmapFactory.decodeFile(file.absolutePath)?.let {
-                synchronized(iconLock) { iconMem[url] = it }
-                return@withContext it
+            val bytes = runCatching { file.readBytes() }.getOrNull()
+            if (bytes != null && bytes.isNotEmpty()) {
+                decodeSampled(bytes, ICON_MAX_PX)?.let {
+                    synchronized(iconLock) { iconMem[url] = it }
+                    return@withContext it
+                }
             }
         }
 
@@ -116,7 +147,7 @@ object RepoStore {
                 val bytes = (response.body ?: return@use null).bytes()
                 if (bytes.isEmpty()) return@use null
                 runCatching { file.writeBytes(bytes) }
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                val bmp = decodeSampled(bytes, ICON_MAX_PX)
                 if (bmp != null) synchronized(iconLock) { iconMem[url] = bmp }
                 bmp
             }
@@ -222,6 +253,12 @@ object RepoStore {
                 val body = response.body ?: error("回應為空")
                 val total = body.contentLength()
                 var done = 0L
+                // 進度節流：原本每 64 KB 就 withContext(Main) 一次，
+                // 50 MB 的 APK 會觸發約 800 次執行緒切換與重組，介面會卡。
+                // 改成「進度變化超過 2% 或距離上次超過 120 ms」才回報。
+                var lastDone = 0L
+                var lastAt = 0L
+                val step = if (total > 0) (total / 50).coerceAtLeast(64 * 1024) else 256 * 1024
                 body.byteStream().use { input ->
                     FileOutputStream(out).use { output ->
                         val buf = ByteArray(64 * 1024)
@@ -230,10 +267,16 @@ object RepoStore {
                             if (r <= 0) break
                             output.write(buf, 0, r)
                             done += r
-                            onProgress(done, total)
+                            val now = System.currentTimeMillis()
+                            if (done - lastDone >= step || now - lastAt >= 120) {
+                                lastDone = done
+                                lastAt = now
+                                onProgress(done, total)
+                            }
                         }
                     }
                 }
+                onProgress(done, total)   // 收尾一定回報一次，避免停在 99%
                 return
             }
         }

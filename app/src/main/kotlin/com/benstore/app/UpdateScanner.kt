@@ -74,4 +74,33 @@ object UpdateScanner {
         val self = context.packageName
         return repo.apps.count { it.packageName != self && installed.containsKey(it.packageName) }
     }
+
+    /**
+     * 一次列舉同時算出「更新清單」與「追蹤數量」。
+     *
+     * `getInstalledPackages()` 是幾十毫秒等級的呼叫，原本 UI 分別呼叫
+     * [scan] 與 [trackedCount] 會列舉兩次；這裡只列舉一次。
+     */
+    fun scanWithTracked(context: Context, repo: AppRepo): Pair<List<AppUpdate>, Int> {
+        val installed = installed(context)
+        val ignored = Prefs.ignored(context)
+        val self = context.packageName
+        val sdk = Build.VERSION.SDK_INT
+
+        val out = ArrayList<AppUpdate>()
+        var tracked = 0
+        for (app in repo.apps) {
+            if (app.packageName == self) continue
+            val inst = installed[app.packageName] ?: continue
+            tracked++
+
+            val latest = repo.latest(app) ?: continue
+            if (latest.versionCode <= inst.versionCode) continue
+            if (ignored.contains("${app.packageName}:${latest.versionCode}")) continue
+            if (latest.minSdk > sdk) continue
+
+            out.add(AppUpdate(app, latest, inst.versionName, inst.versionCode))
+        }
+        return out.sortedBy { it.app.name.lowercase() } to tracked
+    }
 }

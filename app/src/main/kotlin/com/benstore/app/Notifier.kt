@@ -86,6 +86,9 @@ object Notifier {
             .setContentText(message ?: if (ok) "已安裝到最新版本" else "請檢查安裝權限")
             .setContentIntent(contentIntent(context))
             .setAutoCancel(true)
-        NotificationManagerCompat.from(context).notify(ID_RESULT, builder.build())
+        // 通知 ID 依應用名稱產生：原本用固定 ID，批次更新時後一個結果會蓋掉前一個，
+        // 更新 5 個應用只會看到最後那個的成敗。
+        val id = ID_RESULT + (appName.hashCode() and 0x0FFF)
+        NotificationManagerCompat.from(context).notify(id, builder.build())
     }
 }

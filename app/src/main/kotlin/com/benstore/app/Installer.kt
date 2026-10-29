@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.ConcurrentHashMap
@@ -67,14 +69,22 @@ object Installer {
 
 /**
  * 優先走 Session 安裝；失敗時退回系統安裝器，確保一定裝得上。
+ *
+ * 必須在背景執行：`Installer.install` 會把整個 APK 寫進 PackageInstaller 的
+ * session（input.copyTo(out)），幾十 MB 的檔案放在主執行緒複製會卡住介面甚至 ANR。
+ * 呼叫端原本是 `scope.launch { ... runInstall(...) }`（Main dispatcher），
+ * 所以在這裡直接切到 IO；降級的 startActivity 則回到 Main 再發。
  */
-fun runInstall(context: Context, file: File, packageName: String) {
-    try {
-        Installer.install(context, file, packageName)
-    } catch (t: Throwable) {
-        RepoStore.installApk(context, file)
+suspend fun runInstall(context: Context, file: File, packageName: String) =
+    withContext(Dispatchers.IO) {
+        try {
+            Installer.install(context, file, packageName)
+        } catch (t: Throwable) {
+            withContext(Dispatchers.Main) {
+                RepoStore.installApk(context, file)
+            }
+        }
     }
-}
 
 class InstallResultReceiver : BroadcastReceiver() {
 

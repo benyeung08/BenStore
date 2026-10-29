@@ -51,18 +51,37 @@ object AuthSettings {
     @Volatile
     private var enc: SharedPreferences? = null
 
+    @Volatile
+    private var encFailed = false
+
+    /**
+     * 部分裝置（尤其是改過的 ROM、模擬器、Keystore 損壞時）建立
+     * EncryptedSharedPreferences 會直接拋例外。原本這裡沒有保護，
+     * 一拋就是整個 App 崩潰，連登入畫面都進不去。
+     * 這裡改成失敗就退回一般 SharedPreferences —— token 變成明文儲存，
+     * 安全性下降，但至少功能還能用（與 LocalAuth 的處理方式一致）。
+     */
     private fun prefs(context: Context): SharedPreferences {
         enc?.let { return it }
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        val p = EncryptedSharedPreferences.create(
-            context,
-            FILE,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        var p: SharedPreferences? = null
+        if (!encFailed) {
+            p = try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    FILE,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (t: Throwable) {
+                encFailed = true
+                null
+            }
+        }
+        if (p == null) p = context.getSharedPreferences(FILE + "_plain", Context.MODE_PRIVATE)
         enc = p
         return p
     }

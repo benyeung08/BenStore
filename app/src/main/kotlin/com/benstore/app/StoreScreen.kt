@@ -122,12 +122,19 @@ fun StoreApp(startTab: Int = TAB_APPS) {
     // 存取碼兌換後 +1，讓列表重新過濾
     var tiersTick by remember { mutableIntStateOf(0) }
 
+    // 連續改資料源網址時，上一次的下載可能比新的晚完成，
+    // 結果舊資料蓋掉新資料。這裡記住前一個 Job 並取消，確保只有最後一次生效。
+    var loadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
     fun reload() {
-        scope.launch {
+        loadJob?.cancel()
+        loadJob = scope.launch {
             state = StoreState.Loading
             state = try {
                 StoreState.Ready(RepoStore.load(context, repoUrl, AuthSettings.token(context)))
             } catch (t: Throwable) {
+                // 自己取消的不算錯誤，直接結束，不要把畫面切成「載入失敗」
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 StoreState.Error(t.message ?: "載入失敗")
             }
         }
@@ -503,7 +510,7 @@ private fun UpdatesScreen(repo: AppRepo, onOpen: (RepoApp) -> Unit) {
         scope.launch {
             scanning = true
             val result = withContext(Dispatchers.Default) {
-                UpdateScanner.scan(context, repo) to UpdateScanner.trackedCount(context, repo)
+                UpdateScanner.scanWithTracked(context, repo)
             }
             updates = result.first
             tracked = result.second

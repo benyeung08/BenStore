@@ -180,7 +180,7 @@ python3 tools/build_repo.py
 
 > 用 `raw.githubusercontent.com` 要注意：GitHub 對 raw 有快取，更新 JSON 後可能幾分鐘才生效。要即時生效就改用 GitHub Pages。
 
-## 四、公開模式（預設）／限定模式
+## 四、公開模式／限定模式（目前：限定）
 
 BenStore 有總開關，在 `app/build.gradle.kts`：
 
@@ -194,13 +194,25 @@ buildConfigField("Boolean", "PUBLIC_MODE", "true")
 | 看到什麼 | 全部應用 | 依 `allowedEmails` 分級 |
 | 登入設定 | 被忽略（仍可登入拿額外能力） | 生效 |
 
-**目前就是公開模式**，裝了就能用，不需要任何登入設定。
+**目前已設為強制登入模式（`PUBLIC_MODE = false`）**：沒登入就停在門禁畫面，
+必須用下列三種方式之一進入：
 
-### 要改成限定模式
+| 方式 | 需要設定什麼 |
+| --- | --- |
+| **BenStore 本機帳號** | **零設定**，現場註冊帳號密碼即可（預設可用） |
+| Google 帳號 | `local.properties` 填 `WEB_CLIENT_ID` |
+| GitHub 帳號 | 設定頁填 GitHub OAuth Client ID |
 
-1. 把 `PUBLIC_MODE` 改成 `false`
-2. 至少設定一種登入（下面 Google 或 GitHub 擇一）
-3. 重新編譯
+三種都沒設定時，App **仍然會擋**（不會自動放行），並由本機帳號作為唯一入口。
+這避免了「以為關了門其實沒關」的漏洞。
+
+### 要改回公開模式
+
+1. 把 `app/build.gradle.kts` 的 `PUBLIC_MODE` 改成 `true`
+2. 重新編譯
+
+公開模式下任何人都能瀏覽並安裝全部應用，不做門禁也不做分級，
+`WEB_CLIENT_ID` 與 `ALLOWED_EMAILS` 會被完全忽略。
 
 ### 要讓別人也裝得到
 
@@ -466,12 +478,18 @@ token 存在 `EncryptedSharedPreferences`（AES-256-GCM，金鑰由系統 Keysto
 
 ---
 
-## 六、帳號登入（Google 或 GitHub）
+## 六、帳號登入（Google / GitHub / 本機帳號）
 
-**限定模式下才需要**——公開模式不用設這些。BenStore 支援**兩種登入方式，共用同一套帳號體系**，使用者任選一種即可，效果一致。
+**限定模式下才需要**——公開模式不用設這些。BenStore 支援**三種登入方式，共用同一套帳號體系**，使用者任選一種即可，效果一致。
+
+| 方式 | 要不要設定 | 說明 |
+| --- | --- | --- |
+| **BenStore 本機帳號** | **零設定** | 現場註冊帳號密碼，只存在該手機上。沒設 OAuth 時就靠它進入 |
+| Google | 填 `WEB_CLIENT_ID` | 官方通道 + 網頁 OAuth 備援 |
+| GitHub | 填 Client ID | Device Flow 或貼 PAT |
 
 > 這套與上面的存取碼分級**可以並存**，任一通過即可看見應用。
-> 若你不想碰 OAuth，直接用存取碼就好，整節可以跳過。
+> 若你不想碰 OAuth，直接用存取碼或本機帳號就好，Google / GitHub 兩節可以跳過。
 
 | | Google | GitHub |
 | --- | --- | --- |
@@ -604,9 +622,20 @@ scope 預設 `repo user:email`：
 
 只要公開內容、不做分級的話，改成 `read:user user:email` 更精簡。
 
+### BenStore 本機帳號（零設定）
+
+在門禁畫面點「註冊 BenStore 本機帳號」即可，不需要申請任何東西。
+
+- 密碼用 PBKDF2WithHmacSHA256（12 萬次迭代 + 獨立隨機鹽）雜湊後，
+  存進 `EncryptedSharedPreferences`（Keystore 保管金鑰），不存明文
+- 帳號只存在**該支手機**上，換機不會同步
+- **沒有「忘記密碼」救援機制**（沒有伺服器可以寄信），忘了只能刪帳號重設
+
+想在 `ALLOWED_EMAILS` 名單裡指定本機帳號，寫 `local:帳號名` 或直接寫帳號名都可以。
+
 ### 統一身份：門禁與分級怎麼比對
 
-兩種登入都收斂成一個 `Account`，門禁與分級用**同一份名單**比對：
+三種登入都收斂成一個 `Account`，門禁與分級用**同一份名單**比對：
 
 | 帳號來源 | `id` 長怎樣 | 名單裡可以怎麼寫 |
 | --- | --- | --- |
@@ -803,28 +832,28 @@ base64 -w 0 my-release.jks > my-release.jks.b64
 ### 發版步驟（網頁版）
 
 1. 進倉庫 **Actions** 分頁，左側選 **Release**
-2. 點右上角 **Run workflow** → 填 `v1.0.0`（branch 選 `main`）→ 按 **Run workflow**
+2. 點右上角 **Run workflow** → 填 `v1.0.1`（branch 選 `main`）→ 按 **Run workflow**
 3. 等約 5–10 分鐘，完成後到 **Releases** 頁面就能看到
 
 `Release` workflow 會自動做完這些事：
 
-1. 把 `build.gradle.kts` 的 `versionName` 改成 `1.0.0`、`versionCode` 改成該次 run 編號，並 commit 回 main
+1. 把 `build.gradle.kts` 的 `versionName` 改成 `1.0.1`、`versionCode` 改成該次 run 編號，並 commit 回 main
 2. 編譯 Debug + Release
 3. 用你的金鑰簽名（沒設 secret 就用測試金鑰，並在 log 裡警告）
 4. 產生 `SHA256SUMS.txt`
-5. 建立並推送 `v1.0.0` tag（若已存在則更新該 Release，不會報錯）
+5. 建立並推送 `v1.0.1` tag（若已存在則更新該 Release，不會報錯）
 6. 發布 Release，附上兩個 APK + 校驗檔
 
 ### Release 正文從哪來
 
-優先用專案根目錄的 `RELEASE_NOTES_<tag>.md`，找不到就用 commit 摘要；兩種情況都會**自動在末尾追加 SHA-256 校驗值表格**，不用手動填。repo 內已附上 `RELEASE_NOTES_v1.0.0.md`（中英雙語）。
+優先用專案根目錄的 `RELEASE_NOTES_<tag>.md`，找不到就用 commit 摘要；兩種情況都會**自動在末尾追加 SHA-256 校驗值表格**，不用手動填。repo 內已附上 `RELEASE_NOTES_v1.0.1.md`（中英雙語）。
 
 日後發新版：複製一份改名成 `RELEASE_NOTES_v1.1.0.md` 再跑 workflow 即可。
 
 ### 仍然想用指令？
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.0.1 && git push origin v1.0.1
 ```
 
 這樣只會觸發 `Build APK`（產 Artifact），**不會**自動發布。要發布還是要跑 `Release` workflow，兩條路不要混用，否則會重複。

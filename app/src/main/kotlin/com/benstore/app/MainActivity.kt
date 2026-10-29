@@ -8,16 +8,47 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        const val EXTRA_OPEN_UPDATES = "open_updates"
+    }
+
+    private var openUpdates by mutableStateOf(false)
+    private var authTick by mutableStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UpdateScheduler.schedule(this)
+        openUpdates = intent?.getBooleanExtra(EXTRA_OPEN_UPDATES, false) == true
+
         setContent {
             BenStoreTheme {
-                StoreApp()
+                val account = androidx.compose.runtime.remember(authTick) {
+                    Auth.current(this@MainActivity)
+                }
+                when {
+                    // 公開模式、或兩種登入都沒設定 → 不擋，直接進商店
+                    !Auth.gateEnabled(this@MainActivity) ->
+                        StoreApp(startTab = if (openUpdates) 1 else 0)
+                    account == null -> LockScreen { authTick++ }
+                    !Auth.isAuthorized(this@MainActivity) ->
+                        NotAuthorizedScreen(account) { authTick++ }
+                    else -> StoreApp(startTab = if (openUpdates) 1 else 0)
+                }
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openUpdates = intent.getBooleanExtra(EXTRA_OPEN_UPDATES, false)
     }
 }
 

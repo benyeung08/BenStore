@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MiniFossStore"
+rootProject.name = "BenStore"
 include(":app")

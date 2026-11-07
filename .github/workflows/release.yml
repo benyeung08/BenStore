@@ -6,9 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '版本標籤 / Release tag'
+        description: '版本標籤 / Release tag（請帶 v，例如 v1.0.1）'
         required: true
-        default: 'v1.0.0'
+        # 原本預設 v1.0.0，但 build.gradle.kts 已是 1.0.1，
+        # 直接按預設值發版會把 versionName 倒退成 1.0.0，
+        # 而且會套用宣稱「公開模式免登入」的舊說明檔（與強制登入的 APK 矛盾）。
+        default: 'v1.0.1'
       prerelease:
         description: '標記為預發布 / Mark as pre-release'
         type: boolean
@@ -65,6 +68,13 @@ jobs:
           RUN_NUM: ${{ github.run_number }}
         run: |
           set -e
+          # tag 會被 sed 直接寫進 build.gradle.kts 的字串，也會拿去找
+          # RELEASE_NOTES_<tag>.md。含空格 / 引號 / shell 中繼字元會讓
+          # Kotlin DSL 語法壞掉或注入指令，所以先嚴格校驗。
+          if ! printf '%s' "$TAG" | grep -qE '^v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9._-]+)?$'; then
+            echo "::error::tag 格式不對：$TAG（範例：v1.0.1、v1.1.0-beta.1）"
+            exit 1
+          fi
           ver="${TAG#v}"
           file=app/build.gradle.kts
           # 直接用 run_number 當 versionCode 有風險：若倉庫是從別處匯入、
@@ -133,12 +143,10 @@ jobs:
           LICENSE_PUBKEY: ${{ secrets.LICENSE_PUBKEY }}
         run: |
           set -e
-          if [ -x ./gradlew ]; then
-            GRADLE_BIN=./gradlew
-          else
-            GRADLE_BIN=gradle
-          fi
-          echo "使用: $GRADLE_BIN"
+          # 統一用 Gradle 8.7；理由同 build-apk.yml（gradlew 無 wrapper jar，
+          # 會受 runner 的 $GRADLE_HOME 影響而用到不相容的舊版）。
+          GRADLE_BIN="$(command -v gradle)"
+          echo "使用: $GRADLE_BIN ($("$GRADLE_BIN" --version | grep '^Gradle '))"
           echo "WEB_CLIENT_ID 已設定: $([ -n "$WEB_CLIENT_ID" ] && echo 是 || echo 否)"
           "$GRADLE_BIN" assembleDebug assembleRelease --no-daemon --stacktrace
 

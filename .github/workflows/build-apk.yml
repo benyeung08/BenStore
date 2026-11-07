@@ -90,12 +90,12 @@ jobs:
           LICENSE_PUBKEY: ${{ secrets.LICENSE_PUBKEY }}
         run: |
           set -e
-          if [ -x ./gradlew ]; then
-            GRADLE_BIN=./gradlew
-          else
-            GRADLE_BIN=gradle
-          fi
-          echo "使用: $GRADLE_BIN"
+          # 統一用上一步裝好的 Gradle 8.7，不要呼叫專案根目錄那個轉發腳本：
+          # 專案裡沒有 gradle-wrapper.jar，該腳本不是真正的 Wrapper，
+          # 舊版還會優先讀 $GRADLE_HOME。若 runner 剛好把 GRADLE_HOME 指向
+          # 預裝的舊版 Gradle，AGP 8.5.2 會直接編不過，而且很難從 log 看出原因。
+          GRADLE_BIN="$(command -v gradle)"
+          echo "使用: $GRADLE_BIN ($("$GRADLE_BIN" --version | grep '^Gradle '))"
           echo "WEB_CLIENT_ID 已設定: $([ -n "$WEB_CLIENT_ID" ] && echo 是 || echo 否)"
           "$GRADLE_BIN" assembleDebug assembleRelease --no-daemon --stacktrace
 

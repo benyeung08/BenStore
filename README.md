@@ -4,7 +4,7 @@
 
 **不依賴 F-Droid。** 資料源是一份你自己的 JSON，放在 GitHub Raw、Pages 或任何 HTTPS 位置都行；上架什麼、給什麼版本、從哪裡下載，全部你說了算。
 
-**預設公開**：裝了就能用，不用登入。想改成「只有指定帳號能用」，把 `PUBLIC_MODE` 設成 `false` 即可（見第四章）。
+**目前為強制登入模式**：沒登入就停在門禁畫面，可用 Google / GitHub / BenStore 本機帳號進入。想改回公開商店，把 `PUBLIC_MODE` 設成 `true` 重新編譯即可（見第四章）。
 
 Kotlin + Jetpack Compose，單模組約 2000 行，Push 到 GitHub 就由 Actions 自動編譯、簽名、打包 APK。
 
@@ -13,7 +13,7 @@ Kotlin + Jetpack Compose，單模組約 2000 行，Push 到 GitHub 就由 Action
 | 功能 | 說明 |
 | --- | --- |
 | 自訂資料源 | 指向自己的 `repo.json`，App 內「設定」可隨時改網址 |
-| 公開／限定模式 | 總開關：`PUBLIC_MODE = true` 時免登入、全公開（預設） |
+| 公開／限定模式 | 總開關：`PUBLIC_MODE = false` 時強制登入並啟用分級（目前設定） |
 | Google 帳號登入 | Credential Manager 登入，可限定哪些帳號能用 BenStore |
 | 帳號分級顯示 | `repo.json` 每個應用可指定 `allowedEmails`，不同帳號看到不同清單 |
 | 瀏覽 / 搜尋 / 分類 | 依名稱、包名、簡介搜尋，分類篩選（分類直接讀 JSON） |
@@ -198,7 +198,7 @@ BenStore 有總開關，在 `app/build.gradle.kts`：
 buildConfigField("Boolean", "PUBLIC_MODE", "true")
 ```
 
-| | `PUBLIC_MODE = true`（預設） | `PUBLIC_MODE = false` |
+| | `PUBLIC_MODE = true` | `PUBLIC_MODE = false`（目前設定） |
 | --- | --- | --- |
 | 誰能用 | 任何人，免登入 | 需登入且在 `ALLOWED_EMAILS` 內 |
 | 看到什麼 | 全部應用 | 依 `allowedEmails` 分級 |
@@ -265,8 +265,8 @@ buildConfigField("Boolean", "PUBLIC_MODE", "true")
 
 **A 和 B 都在專案裡做好了，可並存；C 也已接好；D 不需要任何程式碼。**
 
-> 提醒：以上全部都在 `PUBLIC_MODE = false` 時才生效。
-> 預設是 `true`（公開商店），此時所有分級失效、全部應用一律顯示。
+> 提醒：以上全部都在 `PUBLIC_MODE = false` 時才生效（目前設定）。
+> 改成 `true`（公開商店）時所有分級失效、全部應用一律顯示。
 
 ### 怎麼選
 
@@ -361,6 +361,15 @@ BenStore → 設定 → **授權碼** → 貼上 → 啟用。
 
 要完全防轉傳與防改時間，必需有後端線上驗證。這是離線方案的取捨。
 
+> **v1.0.1 之後的實作細節**：App 只把使用者輸入的**原始授權碼**存起來，
+> 每次讀取都重新用內嵌公鑰驗簽、再從 payload 解析分級與到期日。
+> 舊版會把 `tiers` / `exp` 另外拆成明文存進 SharedPreferences 並直接信任，
+> 等於改一下偏好設定就能解鎖全部分級、讓 RSA 簽名形同虛設，已修正。
+> 注意：這仍擋不住「把別人的有效授權碼整串貼進來」，那是離線方案的固有風險。
+>
+> 同理，`ALLOWED_EMAILS` 門禁與存取碼分級都是**客戶端判定**，在 root / 可除錯
+> 環境下可藉由改寫 App 資料繞過。若需要真正的強制授權，請改為伺服器端驗證。
+
 ### 與存取碼的取捨
 
 | | 存取碼 | License |
@@ -443,8 +452,14 @@ BenStore → 設定 → **存取碼** → 貼上 CODE → 兌換。
 
 ### 注意
 
-`PUBLIC_MODE = true`（預設）時**所有分級都會失效**，全部應用一律顯示。
-要讓存取碼生效，必須把 `app/build.gradle.kts` 的 `PUBLIC_MODE` 改成 `false`。
+`PUBLIC_MODE = true` 時**所有分級都會失效**，全部應用一律顯示。
+目前專案是 `false`（強制登入 + 分級生效）；要關掉分級才把
+`app/build.gradle.kts` 的 `PUBLIC_MODE` 改回 `true` 重新編譯。
+
+分級不只擋「應用列表」，**「更新」分頁、背景檢查通知、自動下載安裝**都套用同一套
+`isVisibleTo()` 規則。原本這兩條背景鏈路直接讀整份 `repo.apps`，會把無權使用的
+應用名稱與版本洩漏出來，`autoInstall` 開啟時甚至會把它們裝起來，已修正。
+兌換存取碼 / 授權碼後，「更新」分頁也會立刻重新過濾。
 
 ---
 

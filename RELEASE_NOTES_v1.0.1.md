@@ -8,6 +8,14 @@ BenStore 是一個完全由你掌控的 Android 應用商店，**不依賴 F-Dro
 
 ## 本次變更 / What's new in v1.0.1
 
+> **後續修訂（同一版本號）**：分級規則現在也套用到「更新」分頁與背景檢查／自動安裝；
+> 離線授權碼改為每次重新驗簽；資料源快取依網址分開；repo.json 與圖示加上大小上限；
+> OAuth 回呼伺服器只綁 127.0.0.1；APK 下載暫存檔與快取鍵修正。
+> **Post-release fixes (same version)**: tiering now also applies to the Updates tab and
+> background checks; license codes are re-verified on every read; catalog cache is keyed by URL;
+> size caps on catalog and icons; OAuth loopback bound to 127.0.0.1 only; APK download
+> temp-file and cache-key fixes.
+
 ### 強制登入 / Mandatory sign-in
 
 `PUBLIC_MODE` 現已設為 `false`：**未登入就停在門禁畫面**，無法瀏覽或安裝任何應用。

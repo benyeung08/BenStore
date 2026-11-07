@@ -14,13 +14,19 @@ BenStore 是一個完全由你掌控的 Android 應用商店，**不依賴 F-Dro
 > 再修正：背景排程不再被每次開 App 重置、手動檢查不受「僅 Wi-Fi」擋下、
 > 永久性錯誤不再無限重試、Device Flow 輪詢可容忍單次網路抖動、
 > 安裝結果通知保留應用名、重複點通知可切回更新分頁。
+> 再修正：外部連結只放行 http/https 且不再因無處理者而閃退、深色模式狀態欄圖示、
+> 加密偏好設定降級狀態持久化、安裝降級與取消例外處理、通知 ID 嚴格唯一、
+> 補上 GPL-3.0 `LICENSE` 檔。
 > **Post-release fixes (same version)**: tiering now applies to the Updates tab and
 > background checks; license codes re-verified on every read; catalog cache keyed by URL;
 > size caps on catalog and icons; OAuth loopback bound to 127.0.0.1 only; APK download
 > temp-file and cache-key fixes. Also: periodic work is no longer reset on every app launch,
 > manual checks bypass the Wi-Fi-only gate, permanent failures stop retrying, Device Flow
 > polling tolerates transient network errors, install-result notifications keep the app name,
-> and tapping a notification again returns to the Updates tab.
+> and tapping a notification again returns to the Updates tab. Further hardening: outbound
+> links restricted to http/https with crash-safe handling, dark-mode system bar icons,
+> persisted crypto-prefs fallback, cancellation-safe install fallback, unique result
+> notification IDs, and the missing GPL-3.0 `LICENSE` file.
 
 ### 強制登入 / Mandatory sign-in
 

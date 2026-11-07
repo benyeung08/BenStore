@@ -23,3 +23,6 @@ tools/license_private.pem
 *.pem
 keystore/
 signing/
+
+# CI 與本機收集 APK 的輸出目錄（workflow 會建立 dist/）
+/dist/

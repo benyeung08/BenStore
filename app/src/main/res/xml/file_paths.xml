@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 只暴露實際會安裝的 APK 目錄。
+         原本還有一條指向外部快取根目錄的規則，等於把整個外部快取
+         （含資料源快取、圖示快取）都開放給拿到 content:// URI 的對象，
+         但 RepoStore.installApk() 只用 cacheDir/apks，完全用不到它。 -->
     <cache-path name="apks" path="apks/" />
-    <external-cache-path name="external" path="." />
 </paths>

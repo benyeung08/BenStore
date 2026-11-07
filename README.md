@@ -65,6 +65,15 @@ Kotlin + Jetpack Compose，單模組約 2000 行，Push 到 GitHub 就由 Action
 
 BenStore 讀一份你自己維護的 JSON。放在 GitHub Raw、Pages、或任何 HTTPS 公開可讀的位置都行。
 
+> ⚠️ **所有網址都必須是 `https://`**：Manifest 設了 `android:usesCleartextTraffic="false"`，
+> Android 9+ 會直接擋掉明文 HTTP。自建內網伺服器若只有 `http://192.168.x.x`，
+> `repo.json`、圖示、APK 三者都會載入失敗（錯誤只顯示「載入失敗」，不易聯想到這裡）。
+> 若要支援 HTTP，必須另外加 `network_security_config.xml` 並在 Manifest 引用，
+> 但這會放寬整支 App 的明文流量，不建議。
+>
+> Google 網頁登入的 `http://127.0.0.1:8765` 不受影響：那是瀏覽器端重新導向，
+> App 這邊只用 `ServerSocket` 接收連線，沒有發出明文 HTTP 請求。
+
 ```json
 {
   "meta": { "name": "BenStore", "updated": 1730000000000 },
@@ -823,6 +832,9 @@ base64 -w 0 my-release.jks > my-release.jks.b64
 `KEYSTORE_BASE64`、`KEYSTORE_ALIAS`、`KEYSTORE_STORE_PASSWORD`、`KEYSTORE_KEY_PASSWORD`
 
 下次 Actions 就會用你的金鑰簽名，升級不掉資料。金鑰檔本身請另外備份，不要進 repo。
+`.gitignore` 已加入 `*.jks`、`*.keystore`、`*.b64`、`*.pem`，即使你在倉庫目錄下產生
+`my-release.jks` 再 `git add -A` 也不會誤提交私鑰。**仍請另外離線備份金鑰**——
+弄丟了就再也無法發布可覆蓋安裝的更新，只能換包名或請使用者解除安裝。
 
 **B. 編譯期設定（4 個，沒設也能編，但功能會停用）**
 
@@ -877,12 +889,20 @@ git tag v1.0.1 && git push origin v1.0.1
 
 ## 十二、想在本機編譯
 
-需要 Android Studio（Ladybug 以上）或 JDK 17 + Android SDK 34：
+需要 JDK 17 + Android SDK 34（含 `build-tools;34.0.0`）+ **Gradle 8.7**：
 
 ```bash
-./gradlew assembleDebug      # 沒 wrapper 就先跑：gradle wrapper
+gradle --version            # 必須是 8.7，AGP 8.5.2 與其他版本不一定相容
+gradle assembleDebug
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
+
+> 本專案**沒有** `gradle-wrapper.jar`，`gradlew` 只是一個轉發到 PATH 上 Gradle 的
+> 小腳本，不是標準 Wrapper。所以 `./gradlew assembleDebug` 能用，但前提是
+> 本機已裝好 Gradle 8.7；Android Studio 直接開專案時請用「Sync Project with
+> Gradle Files」，它會用自己內建的 Gradle。
+> 若想改成真正的 Wrapper，執行 `gradle wrapper --gradle-version 8.7` 會補齊
+> `gradle-wrapper.jar` 與正確的 `gradlew`，之後就能照一般 Android 專案操作。
 
 ## 十三、另一條更快路線：直接 Fork 成熟客戶端
 

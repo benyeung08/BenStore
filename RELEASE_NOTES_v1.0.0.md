@@ -1,5 +1,11 @@
 # BenStore v1.0.0
 
+> ⚠️ **歷史版本說明檔 / Historical release notes.**
+> 本檔僅供 `v1.0.0` 標籤使用。目前程式碼為 **v1.0.1**（`PUBLIC_MODE = false`，強制登入），
+> 與本檔描述的「公開模式免登入」不同。發新版請用 `RELEASE_NOTES_v1.0.1.md`。
+> This file is for the `v1.0.0` tag only. Current code is **v1.0.1** with mandatory sign-in;
+> use `RELEASE_NOTES_v1.0.1.md` for new releases.
+
 BenStore is a self-hosted Android app store with **no F-Droid dependency**. It reads a `repo.json` catalog that you maintain yourself, lists apps with icons and versions, downloads APKs (with optional SHA-256 verification), installs them, and tracks updates for everything already installed on your device.
 
 BenStore 是一個完全由你掌控的 Android 應用商店，**不依賴 F-Droid**：讀取你自己維護的 `repo.json`，列出應用的圖示與版本、下載 APK（可選 SHA-256 驗證）並安裝，同時持續追蹤裝置上已安裝應用的更新。

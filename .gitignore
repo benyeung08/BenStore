@@ -12,3 +12,14 @@ local.properties
 
 # 離線授權私鑰（絕對不能進 repo）
 tools/license_private.pem
+
+# ---- 簽名金鑰（絕對不能進 repo）----
+# README 第十節會產生 my-release.jks 與 my-release.jks.b64；
+# 若使用者在倉庫目錄下執行，`git add -A` 會直接把私鑰推上 GitHub。
+# 這裡做第二道防線，不要只靠「請不要進 repo」的文字提醒。
+*.jks
+*.keystore
+*.b64
+*.pem
+keystore/
+signing/

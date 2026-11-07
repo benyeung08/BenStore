@@ -139,4 +139,14 @@ object Prefs {
             .remove(K_LIC_EXP)
             .apply()
     }
+
+    // ---- 背景排程設定簽名 ----
+    // 記錄上次排程的「間隔 | 僅 Wi-Fi」，避免每次開 App 都重設週期計時器。
+    private const val K_SCHEDULE_SIG = "schedule_sig"
+
+    fun scheduleSig(c: Context): String =
+        sp(c).getString(K_SCHEDULE_SIG, null) ?: ""
+
+    fun setScheduleSig(c: Context, v: String) =
+        sp(c).edit().putString(K_SCHEDULE_SIG, v).apply()
 }

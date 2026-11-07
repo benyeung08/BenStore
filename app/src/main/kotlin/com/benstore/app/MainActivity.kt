@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
 
     private var openUpdates by mutableStateOf(false)
     private var authTick by mutableStateOf(0)
+    private var navTick by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,13 +42,13 @@ class MainActivity : ComponentActivity() {
                 when {
                     // 公開模式（PUBLIC_MODE = true）→ 不擋，直接進商店
                     !Auth.gateEnabled(this@MainActivity) ->
-                        StoreApp(startTab = if (openUpdates) 1 else 0)
+                        StoreApp(startTab = if (openUpdates) 1 else 0, navTick = navTick)
                     // 沒登入 → 停在門禁畫面（Google / GitHub / 本機帳號 三選一）
                     account == null -> LockScreen { authTick++ }
                     // 已登入但不在 ALLOWED_EMAILS 名單內
                     !Auth.isAuthorized(this@MainActivity) ->
                         NotAuthorizedScreen(account) { authTick++ }
-                    else -> StoreApp(startTab = if (openUpdates) 1 else 0)
+                    else -> StoreApp(startTab = if (openUpdates) 1 else 0, navTick = navTick)
                 }
             }
         }
@@ -57,6 +58,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         openUpdates = intent.getBooleanExtra(EXTRA_OPEN_UPDATES, false)
+        // 即使 startTab 值不變（都是「更新」），也讓 StoreApp 重新套用分頁
+        navTick++
     }
 }
 

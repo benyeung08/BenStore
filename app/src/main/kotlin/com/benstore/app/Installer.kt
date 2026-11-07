@@ -98,11 +98,14 @@ class InstallResultReceiver : BroadcastReceiver() {
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
         val pkg = intent.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME)
             ?: Installer.lookup(sessionId)
-        Installer.forget(sessionId)
-
-        val label = pkg?.let { repoLabel(context, it) } ?: "應用"
 
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            // 這只是「需要使用者確認」，不是最終結果：系統會再送一次
+            // SUCCESS / FAILURE 給同一個 IntentSender。
+            // 原本在這裡就 forget(sessionId)，等第二次廣播進來時查不到映射，
+            // 若該次剛好沒帶 EXTRA_PACKAGE_NAME，通知標題會退化成「應用」。
+            // 因此保留映射，等最終狀態才清。
+            //
             // 系統彈出確認框，把 PendingIntent 轉發出去
             val more = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
@@ -116,6 +119,9 @@ class InstallResultReceiver : BroadcastReceiver() {
             }
             return
         }
+
+        val label = pkg?.let { repoLabel(context, it) } ?: "應用"
+        Installer.forget(sessionId)
 
         if (status == PackageInstaller.STATUS_SUCCESS) {
             Notifier.installResult(context, label, true, null)

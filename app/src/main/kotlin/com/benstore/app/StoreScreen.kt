@@ -112,8 +112,13 @@ fun RequestNotificationPermissionIfNeeded() {
     }
 }
 
+/**
+ * @param navTick 每次從通知點進來就 +1，用來強制重新套用 [startTab]。
+ *   原本只用 LaunchedEffect(startTab)：使用者手動切到別的分頁後再點同一則通知，
+ *   startTab 值沒變、Effect 不會重跑，畫面不會回到「更新」分頁。
+ */
 @Composable
-fun StoreApp(startTab: Int = TAB_APPS) {
+fun StoreApp(startTab: Int = TAB_APPS, navTick: Int = 0) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -147,8 +152,8 @@ fun StoreApp(startTab: Int = TAB_APPS) {
         }
     }
 
-    // 從通知點進來時，直接切到「更新」分頁
-    LaunchedEffect(startTab) { tab = startTab }
+    // 從通知點進來時，直接切到「更新」分頁；navTick 讓重複點擊也能生效
+    LaunchedEffect(startTab, navTick) { tab = startTab }
 
     LaunchedEffect(repoUrl) {
         Prefs.setRepoUrl(context, repoUrl)
@@ -835,10 +840,23 @@ private fun SettingsScreen(
         Button(
             onClick = {
                 running = true
+                val before = Prefs.lastCheck(context)
                 UpdateScheduler.checkNow(context)
+                // 原本固定等 3 秒就收工，但 WorkManager 可能還沒排到、
+                // 網路也可能慢，lastCheck 沒更新就顯示舊時間，看起來像沒動。
+                // 改成輪詢到 lastCheck 真的改變（或 30 秒逾時）才結束。
                 scope.launch {
-                    delay(3000)
-                    lastCheck = Prefs.lastCheck(context)
+                    var done = false
+                    for (i in 0 until 30) {
+                        delay(1000)
+                        val now = Prefs.lastCheck(context)
+                        if (now > before) {
+                            lastCheck = now
+                            done = true
+                            break
+                        }
+                    }
+                    if (!done) lastCheck = Prefs.lastCheck(context)
                     running = false
                 }
             },

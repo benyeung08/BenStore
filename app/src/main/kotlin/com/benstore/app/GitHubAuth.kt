@@ -113,7 +113,13 @@ object GitHubAuth {
         }
     }
 
-    /** 輪詢直到使用者完成授權，回傳 access token */
+    /**
+     * 輪詢直到使用者完成授權，回傳 access token。
+     *
+     * 單次網路抖動 / GitHub 回非 JSON（維運頁、HTML 錯誤頁）不該中斷整個
+     * 15 分鐘的授權流程：原本 tryPoll 裡 JSONObject(text) 一拋例外就往上炸，
+     * 使用者得重新產生裝置碼。這裡把「可重試」與「明確失敗」分開。
+     */
     suspend fun pollForToken(
         clientId: String,
         dc: DeviceCode,
@@ -121,15 +127,35 @@ object GitHubAuth {
     ): String = withContext(Dispatchers.IO) {
         val deadline = System.currentTimeMillis() + dc.expiresIn * 1000L
         var wait = dc.interval.coerceAtLeast(5).toLong()
+        var transient = 0
         while (System.currentTimeMillis() < deadline) {
             delay(wait * 1000L)
             onTick()
-            val token = tryPoll(clientId, dc, wait)
-            if (token.first != null) return@withContext token.first!!
-            wait = token.second
+            val r = runCatching { tryPoll(clientId, dc, wait) }
+            if (r.isSuccess) {
+                val (token, next) = r.getOrThrow()
+                if (token != null) return@withContext token
+                wait = next
+                transient = 0
+            } else {
+                val e = r.exceptionOrNull()
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // 明確的授權錯誤（expired_token / access_denied / 不支援的 grant）
+                // 不該一直重試；其餘視為暫時性，最多連續容忍 5 次。
+                if (e is TerminalAuthException) throw IllegalStateException(e.message)
+                transient++
+                if (transient >= 5) {
+                    throw IllegalStateException(
+                        "連續 $transient 次無法連上 GitHub，請檢查網路後重試", e
+                    )
+                }
+            }
         }
         error("授權逾時，請重新嘗試")
     }
+
+    /** 標記「明確失敗、重試也沒用」的授權錯誤 */
+    private class TerminalAuthException(message: String) : IllegalStateException(message)
 
     /** 回傳 (token?, 下次等待秒數)；pending 時 token 為 null */
     private fun tryPoll(clientId: String, dc: DeviceCode, wait: Long): Pair<String?, Long> {
@@ -145,14 +171,17 @@ object GitHubAuth {
             .build()
         client.newCall(req).execute().use { resp ->
             val text = resp.body?.string() ?: return null to wait
-            val j = JSONObject(text)
+            // 維護頁 / proxy 錯誤頁可能是 HTML，直接 JSONObject() 會拋 JSONException
+            val j = runCatching { JSONObject(text) }.getOrNull()
+                ?: return null to wait
             if (j.has("access_token")) return j.getString("access_token") to wait
-            return when (j.optString("error")) {
+            return when (val err = j.optString("error")) {
                 "authorization_pending" -> null to wait
                 "slow_down" -> null to (wait + 5)
-                else -> error(
+                else -> throw TerminalAuthException(
                     j.optString("error_description")
                         .ifBlank { j.optString("error", "授權失敗") }
+                        .ifBlank { "GitHub 回應錯誤：$err" }
                 )
             }
         }
@@ -209,7 +238,7 @@ object GitHubAuth {
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("取得使用者資料失敗 HTTP ${resp.code}")
-            val j = JSONObject(resp.body!!.string())
+            val j = JSONObject(resp.body?.string() ?: error("回應為空"))
             GitHubUser(
                 login = j.optString("login"),
                 name = j.optString("name"),
@@ -237,7 +266,7 @@ object GitHubAuth {
                 .build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
-                val arr = org.json.JSONArray(resp.body!!.string())
+                val arr = org.json.JSONArray(resp.body?.string() ?: return@withContext null)
                 var fallback: String? = null
                 for (i in 0 until arr.length()) {
                     val o = arr.getJSONObject(i)

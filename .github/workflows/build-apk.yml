@@ -3,10 +3,11 @@ name: Build APK
 # 每次 push / PR 的例行建置：只產出 APK 當作 Artifact，不發布。
 # 要發正式版本請用另一個 workflow：Actions → Release → Run workflow。
 on:
+  # 倉庫同時存在 main 與 master，只監聽其中一個會讓另一個分支的 push 完全不觸發
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
@@ -23,12 +24,29 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+
+      # compileSdk = 34，但 runner 映像檔預裝的 SDK 版本會隨時間變動，
+      # 不保證還有 android-34 / 對應的 build-tools。明確裝一次才不會
+      # 出現 "Failed to find Platform SDK with path: platforms/android-34"。
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 34 platform & build-tools
+        run: |
+          set -e
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --list_installed | grep -E "android-34|34\.0\.0" || true
 
       - name: Set up Gradle 8.7
         run: |
           set -e
-          # 專案沒有內建 gradlew wrapper，直接用官方發行版，行為最穩定
-          curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          # --fail 讓 4xx/5xx 直接失敗，否則會把錯誤頁當成 zip 丟給 unzip
+          curl --fail --retry 3 -sSL -o /tmp/gradle.zip \
+            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -tq /tmp/gradle.zip
           sudo unzip -q -o /tmp/gradle.zip -d /opt
           sudo ln -sf /opt/gradle-8.7/bin/gradle /usr/local/bin/gradle
           gradle --version
@@ -62,7 +80,14 @@ jobs:
           fi
           ls -l "$RUNNER_TEMP/keystore.jks"
 
+      # 登入相關設定經環境變數注入，由 app/build.gradle.kts 的 sec() 讀取。
+      # 沒設這些 secret 也能編，只是登入功能停用（App 顯示設定提示，不會崩潰）。
       - name: Build Debug + Release
+        env:
+          WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
+          ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          LICENSE_PUBKEY: ${{ secrets.LICENSE_PUBKEY }}
         run: |
           set -e
           if [ -x ./gradlew ]; then
@@ -71,6 +96,7 @@ jobs:
             GRADLE_BIN=gradle
           fi
           echo "使用: $GRADLE_BIN"
+          echo "WEB_CLIENT_ID 已設定: $([ -n "$WEB_CLIENT_ID" ] && echo 是 || echo 否)"
           "$GRADLE_BIN" assembleDebug assembleRelease --no-daemon --stacktrace
 
       # 檔名會依「有沒有簽名」而不同，所以自動偵測，不寫死。

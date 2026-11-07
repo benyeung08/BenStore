@@ -35,11 +35,24 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      # compileSdk = 34，runner 預裝 SDK 會變動，明確安裝避免找不到 android-34
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 34 platform & build-tools
+        run: |
+          set -e
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --list_installed | grep -E "android-34|34\.0\.0" || true
+
       - name: Set up Gradle 8.7
         run: |
           set -e
-          # 專案沒有內建 gradlew wrapper，直接用官方發行版，行為最穩定
-          curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          curl --fail --retry 3 -sSL -o /tmp/gradle.zip \
+            https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -tq /tmp/gradle.zip
           sudo unzip -q -o /tmp/gradle.zip -d /opt
           sudo ln -sf /opt/gradle-8.7/bin/gradle /usr/local/bin/gradle
           gradle --version
@@ -54,9 +67,16 @@ jobs:
           set -e
           ver="${TAG#v}"
           file=app/build.gradle.kts
-          sed -i "s/versionCode = [0-9]*/versionCode = ${RUN_NUM}/" "$file"
+          # 直接用 run_number 當 versionCode 有風險：若倉庫是從別處匯入、
+          # run_number 從 1 重新開始，會比已發布的版本還小，使用者無法覆蓋安裝。
+          # 改成「目前值 + 1」與 run_number 取較大者，保證單調遞增。
+          CUR=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' "$file" | head -1)
+          CUR=${CUR:-0}
+          NEW=$((CUR + 1))
+          if [ "$RUN_NUM" -gt "$NEW" ]; then NEW=$RUN_NUM; fi
+          sed -i "s/versionCode = [0-9]*/versionCode = ${NEW}/" "$file"
           sed -i "s/versionName = \"[^\"]*\"/versionName = \"${ver}\"/" "$file"
-          echo "已設定 versionName=${ver} versionCode=${RUN_NUM}"
+          echo "已設定 versionName=${ver} versionCode=${NEW}（原 ${CUR}，run ${RUN_NUM}）"
           grep -n "versionName\|versionCode" "$file"
           echo "version=$ver" >> "$GITHUB_OUTPUT"
 
@@ -103,7 +123,14 @@ jobs:
           fi
 
       # ---------- 3. 編譯 ----------
+      # 登入相關設定經環境變數注入，由 app/build.gradle.kts 的 sec() 讀取。
+      # 沒設這些 secret 也能編，只是登入功能停用（App 顯示設定提示，不會崩潰）。
       - name: Build Debug + Release
+        env:
+          WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
+          ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          LICENSE_PUBKEY: ${{ secrets.LICENSE_PUBKEY }}
         run: |
           set -e
           if [ -x ./gradlew ]; then
@@ -112,6 +139,7 @@ jobs:
             GRADLE_BIN=gradle
           fi
           echo "使用: $GRADLE_BIN"
+          echo "WEB_CLIENT_ID 已設定: $([ -n "$WEB_CLIENT_ID" ] && echo 是 || echo 否)"
           "$GRADLE_BIN" assembleDebug assembleRelease --no-daemon --stacktrace
 
       # 檔名會依「有沒有簽名」而不同（app-release.apk / app-release-unsigned.apk），
@@ -200,10 +228,17 @@ jobs:
           if [ -f "$notes" ]; then
             cat "$notes" > "$body"
           else
-            echo "# BenStore ${TAG}" > "$body"
-            echo "" >> "$body"
-            echo "_(沒有找到 \`${notes}\`，以下是 commit 摘要)_" >> "$body"
-            echo "" >> "$body"
+            # 原本降級分支只寫了「以下是 commit 摘要」卻沒真的附上，這裡補實
+            {
+              echo "# BenStore ${TAG}"
+              echo ""
+              echo "_（沒有找到 \`${notes}\`，以下為本次發版的 commit 摘要）_"
+              echo ""
+              echo '```'
+              git log -n 20 --pretty=format:'%h %s' 2>/dev/null || true
+              echo ""
+              echo '```'
+            } > "$body"
           fi
           {
             echo ""
@@ -227,17 +262,18 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
         run: |
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "::warning::tag $TAG 已存在，將更新該 Release"
-          elif git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-            echo "::warning::遠端已有 tag $TAG，將更新該 Release"
-          else
-            git config user.name  "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "BenStore ${TAG}"
-            git push origin "$TAG"
-            echo "已建立 tag $TAG"
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 重跑同一個 tag 時，原本只印 warning 不更新 tag，
+          # 結果 Release 內容換了、tag 卻仍指向舊的（未 bump 版本的）commit。
+          # 改為一律把 tag 指向本次 commit 再 force push。
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "::notice::tag $TAG 已存在，將移至本次 commit 並更新該 Release"
           fi
+          git tag -f -a "$TAG" -m "BenStore ${TAG}" HEAD
+          git push origin -f "$TAG"
+          echo "tag $TAG → $(git rev-parse --short HEAD)"
 
       # ---------- 7. 發布 ----------
       - name: Publish GitHub Release
@@ -250,6 +286,7 @@ jobs:
             dist/*.apk
             dist/SHA256SUMS.txt
           prerelease: ${{ inputs.prerelease }}
-          make_latest: true
+          # prerelease 不該被標成 latest，GitHub API 在這個組合會報錯或忽略
+          make_latest: ${{ inputs.prerelease == false }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

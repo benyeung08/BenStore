@@ -1,5 +1,6 @@
 package com.benstore.app
 
+import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -8,10 +9,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -30,6 +34,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BenStoreTheme {
+                SystemBarAppearance()
+
                 // 放在門禁之前：強制登入模式下使用者第一次開 App 只會看到
                 // LockScreen，若把權限請求留在 StoreApp，Android 13+ 要等登入後
                 // 才會詢問；而 UpdateScheduler 在 onCreate 就排程了，
@@ -75,6 +81,28 @@ private val DarkColors = darkColorScheme(
     onPrimary = Color(0xFF0D47A1),
     secondary = Color(0xFF80CBC4)
 )
+
+/**
+ * themes.xml 把 `windowLightStatusBar` 寫死為 true（深色圖示），
+ * 但 BenStoreTheme 會跟著系統切深色配色、狀態欄又是透明背景。
+ * 深色模式下就會變成「深色圖示壓在深色內容上」，幾乎看不見。
+ *
+ * 這裡在每次重組後依實際深淺設定系統欄圖示顏色。
+ * 刻意不改變 decor 與系統欄的貼合設定──若讓內容延伸到狀態欄後面，
+ * 而 Compose 目前沒有加 statusBarsPadding()，TopAppBar 會被蓋住。
+ */
+@Composable
+private fun SystemBarAppearance() {
+    val view = LocalView.current
+    val dark = isSystemInDarkTheme()
+    SideEffect {
+        val window = (view.context as? Activity)?.window ?: return@SideEffect
+        WindowInsetsControllerCompat(window, view).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
+}
 
 @Composable
 fun BenStoreTheme(

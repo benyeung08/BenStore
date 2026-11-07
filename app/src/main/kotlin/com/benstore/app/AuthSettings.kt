@@ -51,20 +51,33 @@ object AuthSettings {
     @Volatile
     private var enc: SharedPreferences? = null
 
-    @Volatile
-    private var encFailed = false
+    // 降級標誌必須「持久化」：原本只用行程內的 @Volatile 變數，
+    // 重開 App 後又去試加密檔 → Keystore 時好時壞的裝置會在
+    // 加密檔與 plain 檔之間來回切，token 一下讀得到、一下讀不到，
+    // 使用者會莫名其妙被登出。一旦降級就固定走 plain，行為才確定。
+    private const val STATE_FILE = "benstore_keystore_state"
+    private const val K_DEGRADED = "auth_degraded"
+
+    private fun degraded(context: Context): Boolean =
+        context.getSharedPreferences(STATE_FILE, Context.MODE_PRIVATE)
+            .getBoolean(K_DEGRADED, false)
+
+    private fun markDegraded(context: Context) =
+        context.getSharedPreferences(STATE_FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(K_DEGRADED, true).apply()
 
     /**
-     * 部分裝置（尤其是改過的 ROM、模擬器、Keystore 損壞時）建立
-     * EncryptedSharedPreferences 會直接拋例外。原本這裡沒有保護，
-     * 一拋就是整個 App 崩潰，連登入畫面都進不去。
-     * 這裡改成失敗就退回一般 SharedPreferences —— token 變成明文儲存，
-     * 安全性下降，但至少功能還能用（與 LocalAuth 的處理方式一致）。
+     * 部分裝置（改過的 ROM、模擬器、Keystore 損壞時）建立
+     * EncryptedSharedPreferences 會直接拋例外。失敗就退回一般
+     * SharedPreferences：token 變成明文儲存，安全性下降，但功能還能用。
+     *
+     * 注意兩個檔案不能同名：加密檔的 key/value 都是密文，
+     * 用同一個檔名開成普通 prefs 會讀到亂碼並寫壞資料，所以必須分開。
      */
     private fun prefs(context: Context): SharedPreferences {
         enc?.let { return it }
         var p: SharedPreferences? = null
-        if (!encFailed) {
+        if (!degraded(context)) {
             p = try {
                 val masterKey = MasterKey.Builder(context)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -77,7 +90,12 @@ object AuthSettings {
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
             } catch (t: Throwable) {
-                encFailed = true
+                android.util.Log.w(
+                    "BenStore.AuthSettings",
+                    "Keystore 不可用，token 改以明文保存（已永久降級，清除 App 資料可重試）",
+                    t
+                )
+                markDegraded(context)
                 null
             }
         }

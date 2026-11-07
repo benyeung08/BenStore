@@ -80,6 +80,10 @@ suspend fun runInstall(context: Context, file: File, packageName: String) =
         try {
             Installer.install(context, file, packageName)
         } catch (t: Throwable) {
+            // 協程取消不是「安裝失敗」。原本 catch(Throwable) 會把它一起吞掉，
+            // 結果使用者離開畫面、協程被 cancel，反而彈出系統安裝器。
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            android.util.Log.w("BenStore.Installer", "Session 安裝失敗，降級到系統安裝器", t)
             withContext(Dispatchers.Main) {
                 RepoStore.installApk(context, file)
             }
@@ -114,8 +118,12 @@ class InstallResultReceiver : BroadcastReceiver() {
                 intent.getParcelableExtra(Intent.EXTRA_INTENT)
             }
             if (more != null) {
-                more.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(more)
+                // 系統給的確認 Intent 也可能找不到處理者（部分 OEM／被管控裝置），
+                // 在 BroadcastReceiver 裡拋例外會直接讓進程崩潰。
+                runCatching {
+                    more.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(more)
+                }
             }
             return
         }

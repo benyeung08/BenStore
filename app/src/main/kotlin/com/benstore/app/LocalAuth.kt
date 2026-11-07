@@ -51,13 +51,24 @@ object LocalAuth {
     @Volatile
     private var cache: SharedPreferences? = null
 
-    @Volatile
-    private var encFailed = false
+    // 與 AuthSettings 同理：降級標誌要持久化，否則重開 App 會在
+    // 加密檔 / plain 檔之間來回切，本機帳號會「時有時無」，
+    // 而強制登入模式下這等於把使用者鎖在門外。
+    private const val STATE_FILE = "benstore_keystore_state"
+    private const val K_DEGRADED = "local_auth_degraded"
+
+    private fun degraded(context: Context): Boolean =
+        context.getSharedPreferences(STATE_FILE, Context.MODE_PRIVATE)
+            .getBoolean(K_DEGRADED, false)
+
+    private fun markDegraded(context: Context) =
+        context.getSharedPreferences(STATE_FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(K_DEGRADED, true).apply()
 
     private fun prefs(context: Context): SharedPreferences {
         cache?.let { return it }
         var p: SharedPreferences? = null
-        if (!encFailed) {
+        if (!degraded(context)) {
             p = try {
                 val masterKey = MasterKey.Builder(context)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -70,7 +81,12 @@ object LocalAuth {
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
             } catch (t: Throwable) {
-                encFailed = true
+                android.util.Log.w(
+                    "BenStore.LocalAuth",
+                    "Keystore 不可用，本機帳號改存一般偏好設定（已永久降級）",
+                    t
+                )
+                markDegraded(context)
                 null
             }
         }

@@ -11,13 +11,19 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicInteger
 
 object Notifier {
 
     const val CH_UPDATE = "benstore_updates"
     const val CH_RESULT = "benstore_results"
     private const val ID_UPDATE = 1001
-    private const val ID_RESULT = 1002
+    private const val ID_RESULT_BASE = 1002
+
+    // 原本用應用名稱雜湊映射到 4096 個槽位，批次更新時兩個不同應用
+    // 仍可能撞 ID 而互相覆蓋。改成嚴格遞增，每個安裝結果各佔一個 ID；
+    // 重啟後歸零只會覆蓋到舊通知，無害。
+    private val resultIds = AtomicInteger(ID_RESULT_BASE)
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -32,9 +38,11 @@ object Notifier {
     }
 
     fun canNotify(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return NotificationManagerCompat.from(context).areNotificationsEnabled()
-        }
+        // 兩個條件都要查：部分 OEM 上 POST_NOTIFICATIONS 仍是 granted，
+        // 但使用者在系統設定裡把這個 App 的通知總開關關掉了，
+        // notify() 會靜默失敗（不拋例外），UI 卻顯示「已授權」。
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
             context, Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
@@ -86,9 +94,7 @@ object Notifier {
             .setContentText(message ?: if (ok) "已安裝到最新版本" else "請檢查安裝權限")
             .setContentIntent(contentIntent(context))
             .setAutoCancel(true)
-        // 通知 ID 依應用名稱產生：原本用固定 ID，批次更新時後一個結果會蓋掉前一個，
-        // 更新 5 個應用只會看到最後那個的成敗。
-        val id = ID_RESULT + (appName.hashCode() and 0x0FFF)
+        val id = resultIds.getAndIncrement()
         NotificationManagerCompat.from(context).notify(id, builder.build())
     }
 }

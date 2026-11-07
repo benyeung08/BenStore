@@ -379,7 +379,10 @@ object RepoStore {
 
     /** 跳到系統設定頁授權安裝 */
     fun openInstallPermissionSettings(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        // 部分 OEM 沒有實作這個設定頁，startActivity 會直接拋
+        // ActivityNotFoundException；原本沒保護，點「去授權」就閃退。
+        runCatching {
             val intent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:${context.packageName}")
@@ -391,25 +394,48 @@ object RepoStore {
 
     /** 呼叫系統安裝器安裝 APK（Session 安裝失敗時的降級方案） */
     fun installApk(context: Context, file: File) {
-        val uri: Uri = FileProvider.getUriForFile(
-            context,
-            context.packageName + ".fileprovider",
-            file
-        )
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addCategory(Intent.CATEGORY_DEFAULT)
+        // 降級路徑原本沒有例外處理：裝置上若沒有能處理
+        // application/vnd.android.package-archive 的 Activity，
+        // 或 FileProvider 找不到檔案，會直接崩潰而不是回到 UI 顯示錯誤。
+        runCatching {
+            val uri: Uri = FileProvider.getUriForFile(
+                context,
+                context.packageName + ".fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            context.startActivity(intent)
         }
-        context.startActivity(intent)
     }
 
-    fun openUrl(context: Context, url: String) {
-        if (url.isBlank()) return
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+    /**
+     * 開啟外部連結。
+     *
+     * ⚠️ 這裡的字串可能來自 repo.json 的 `webSite` / `sourceCode`，
+     * 是**外部可控輸入**。原本直接 `Uri.parse(url)` + `startActivity`：
+     *  - `file://` / `content://` 可讓惡意資料源喚起任意元件；
+     *  - `javascript:`、`mailto:`（沒裝郵件 App）或畸形 URI 找不到處理者，
+     *    會拋 ActivityNotFoundException 直接閃退。
+     *
+     * 現在只放行 http/https，且整段包 runCatching。
+     */
+    fun openUrl(context: Context, url: String): Boolean {
+        if (url.isBlank()) return false
+        val uri = runCatching { Uri.parse(url.trim()) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return false
+        if (uri.host.isNullOrBlank()) return false
+        return runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, uri)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            true
+        }.getOrDefault(false)
     }
 
     fun formatSize(bytes: Long): String {

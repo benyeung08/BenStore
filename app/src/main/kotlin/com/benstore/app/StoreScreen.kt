@@ -435,9 +435,12 @@ fun AppIcon(app: RepoApp, size: Int) {
         }
     }
 
-    if (bitmap != null) {
+    // 用局部 val 接住，不要對委託屬性用非空斷言（Compose 的 by mutableStateOf
+    // 無法 smart cast；寫斷言雖然目前不會炸，但重構時很容易踩到 NPE）。
+    val current = bitmap
+    if (current != null) {
         Image(
-            bitmap = bitmap!!.asImageBitmap(),
+            bitmap = current.asImageBitmap(),
             contentDescription = null,
             modifier = Modifier.size(size.dp)
         )
@@ -1305,6 +1308,8 @@ private fun AccountSection() {
 
     val googleOk = remember { Auth.googleConfigured() }
     val githubOk = remember { Auth.githubConfigured(context) }
+    // 快照一次：下面用這個局部值判斷並渲染，避免對委託屬性用非空斷言
+    val dc = pending
 
     Text("帳號", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(4.dp))
@@ -1394,9 +1399,8 @@ private fun AccountSection() {
                 ) { Text("登出") }
             }
         }
-    } else if (pending != null) {
+    } else if (dc != null) {
         // GitHub 裝置碼等待中
-        val dc = pending!!
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("請完成 GitHub 授權", style = MaterialTheme.typography.titleSmall)

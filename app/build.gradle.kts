@@ -123,7 +123,10 @@ android {
 
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // 原本把兩個檔名合併成一條大括號規則：Gradle 用的是 Ant 風格
+            // pattern，大括號不是合法 glob，那一條等於沒作用。拆成兩條。
+            excludes += "/META-INF/AL2.0"
+            excludes += "/META-INF/LGPL2.1"
         }
     }
 }

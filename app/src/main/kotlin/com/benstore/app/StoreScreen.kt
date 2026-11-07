@@ -131,7 +131,10 @@ fun StoreApp(startTab: Int = TAB_APPS) {
         loadJob = scope.launch {
             state = StoreState.Loading
             state = try {
-                StoreState.Ready(RepoStore.load(context, repoUrl, AuthSettings.token(context)))
+                // AuthSettings.token() 會建立/讀取 Keystore 加密的偏好設定，
+                // 這是磁碟 + Keystore I/O，在主執行緒呼叫會卡住組合。
+                val token = withContext(Dispatchers.IO) { AuthSettings.token(context) }
+                StoreState.Ready(RepoStore.load(context, repoUrl, token))
             } catch (t: Throwable) {
                 // 自己取消的不算錯誤，直接結束，不要把畫面切成「載入失敗」
                 if (t is kotlinx.coroutines.CancellationException) throw t
@@ -536,13 +539,15 @@ private fun UpdatesScreen(repo: AppRepo, onOpen: (RepoApp) -> Unit) {
         scope.launch {
             working = true
             progress = 0f
+            // token 只需讀一次，且讀取涉及 Keystore I/O，不要放進迴圈（主執行緒）
+            val token = withContext(Dispatchers.IO) { AuthSettings.token(context) }
             var ok = 0
             list.forEachIndexed { i, u ->
                 status = "(${i + 1}/${list.size}) 正在下載 ${u.app.name}"
                 progress = i.toFloat() / list.size.toFloat()
                 try {
                     val file = RepoStore.downloadApk(
-                        context, u.app.packageName, u.version, AuthSettings.token(context)
+                        context, u.app.packageName, u.version, token
                     ) { _, _ -> }
                     status = "(${i + 1}/${list.size}) 正在安裝 ${u.app.name}"
                     runInstall(context, file, u.app.packageName)

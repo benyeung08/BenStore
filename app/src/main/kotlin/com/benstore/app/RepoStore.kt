@@ -123,6 +123,33 @@ object RepoStore {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, real)
     }
 
+    /**
+     * 單張圖示的下載上限（bytes）。
+     * `repo.json` 裡的 `icon` 可以是任意網址，原本直接 `body.bytes()`
+     * 把整個回應讀進記憶體 — 若指到一個幾百 MB 的檔案，解碼前就先 OOM 了。
+     * 這裡改成邊讀邊收，超過上限就放棄；圖示本來就不該超過 8 MB。
+     */
+    private const val ICON_MAX_BYTES = 8 * 1024 * 1024
+
+    /** 邊讀邊收，最多讀 [ICON_MAX_BYTES]；超過回傳 null */
+    private fun readCapped(body: okhttp3.ResponseBody): ByteArray? {
+        val declared = body.contentLength()
+        if (declared > ICON_MAX_BYTES) return null
+        val buf = ByteArray(64 * 1024)
+        val out = java.io.ByteArrayOutputStream()
+        var total = 0
+        body.byteStream().use { input ->
+            while (true) {
+                val r = input.read(buf)
+                if (r <= 0) break
+                total += r
+                if (total > ICON_MAX_BYTES) return null
+                out.write(buf, 0, r)
+            }
+        }
+        return out.toByteArray().takeIf { it.isNotEmpty() }
+    }
+
     /** 先查記憶體，再查磁碟，最後才真的下載 */
     suspend fun loadIcon(context: Context, url: String): Bitmap? = withContext(Dispatchers.IO) {
         if (url.isBlank()) return@withContext null
@@ -130,7 +157,7 @@ object RepoStore {
         synchronized(iconLock) { iconMem[url] }?.let { return@withContext it }
 
         val file = File(iconDir(context), md5(url) + ".icon")
-        if (file.exists() && file.length() > 0L) {
+        if (file.exists() && file.length() > 0L && file.length() <= ICON_MAX_BYTES) {
             val bytes = runCatching { file.readBytes() }.getOrNull()
             if (bytes != null && bytes.isNotEmpty()) {
                 decodeSampled(bytes, ICON_MAX_PX)?.let {
@@ -144,8 +171,8 @@ object RepoStore {
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
-                val bytes = (response.body ?: return@use null).bytes()
-                if (bytes.isEmpty()) return@use null
+                val body = response.body ?: return@use null
+                val bytes = readCapped(body) ?: return@use null
                 runCatching { file.writeBytes(bytes) }
                 val bmp = decodeSampled(bytes, ICON_MAX_PX)
                 if (bmp != null) synchronized(iconLock) { iconMem[url] = bmp }

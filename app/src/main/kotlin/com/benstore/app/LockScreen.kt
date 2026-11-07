@@ -44,7 +44,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 未登入時的門禁畫面：可用 Google 或 GitHub 帳號登入。
@@ -61,7 +63,14 @@ fun LockScreen(onSignedIn: () -> Unit) {
 
     val googleOk = remember { Auth.googleConfigured() }
     val githubOk = remember { Auth.githubConfigured(context) }
-    val hasLocal = remember { LocalAuth.hasAccounts(context) }
+
+    // LocalAuth.hasAccounts() 要開 Keystore 加密的偏好設定（磁碟 I/O），
+    // 放在 remember{} 裡會在組合期間於主執行緒執行，畫面會頓一下。
+    // 改為非同步載入，先用 false 顯示，讀到再更新。
+    var hasLocal by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        hasLocal = withContext(Dispatchers.Default) { LocalAuth.hasAccounts(context) }
+    }
 
     // 三種 OAuth 都沒設定時，本機帳號是唯一出路，直接展開
     var showLocal by remember { mutableStateOf(!googleOk && !githubOk) }
@@ -119,10 +128,12 @@ fun LockScreen(onSignedIn: () -> Unit) {
         busy = true
         error = null
         scope.launch {
-            val r = if (isRegister) {
-                LocalAuth.register(context, user, pass)
-            } else {
-                LocalAuth.login(context, user, pass)
+            // PBKDF2 12 萬次迭代約需 100–300 ms，加上 Keystore 解密偏好設定的 I/O，
+            // 直接在 Main 上跑會讓介面明顯卡頓（按下按鈕後畫面凍結一下）。
+            // LocalAuth 不是 suspend，所以在這裡切到 Default。
+            val r = withContext(Dispatchers.Default) {
+                if (isRegister) LocalAuth.register(context, user, pass)
+                else LocalAuth.login(context, user, pass)
             }
             r.onSuccess { onSignedIn() }
                 .onFailure { error = it.message ?: "登入失敗" }

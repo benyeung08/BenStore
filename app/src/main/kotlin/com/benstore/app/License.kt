@@ -46,7 +46,33 @@ object License {
             if (expiresAt <= 0) Long.MAX_VALUE else (expiresAt - now) / 86400
     }
 
-    fun current(context: Context): Claims? = Prefs.licenseClaims(context)
+    @Volatile
+    private var cachedRaw: String? = null
+
+    @Volatile
+    private var cachedClaims: Claims? = null
+
+    /**
+     * 讀取目前生效的 license。
+     *
+     * ⚠️ 這裡**每次都重新驗簽**，不能像舊版那樣直接信任 SharedPreferences 裡的
+     * `license_tiers` / `license_exp`：那些欄位是 redeem 時寫進去的明文，
+     * 只要能改 app 的 prefs（root、Xposed、可除錯環境），就能把 tiers 改成
+     * 任意值、把 exp 改成 0，直接解鎖全部分級，RSA 簽名形同虛設。
+     *
+     * 現在唯一的可信資料是 `license_raw`（使用者輸入的原字串），
+     * claims 一律由驗簽後的 payload 重新解析。驗簽結果做行程內快取，
+     * 避免列表過濾時重複做 RSA verify。
+     */
+    fun current(context: Context): Claims? {
+        val raw = Prefs.licenseRaw(context)?.takeIf { it.isNotBlank() } ?: return null
+        val hit = cachedRaw
+        if (hit == raw) return cachedClaims
+        val claims = runCatching { verifyRaw(raw) }.getOrNull()
+        cachedRaw = raw
+        cachedClaims = claims
+        return claims
+    }
 
     /** 目前這張 license 解鎖的分級（過期就不算） */
     fun grantedTiers(context: Context): Set<String> {
@@ -118,12 +144,18 @@ object License {
             return null
         }
 
-        Prefs.setLicense(context, raw, claims)
+        Prefs.setLicense(context, raw)
+        cachedRaw = raw
+        cachedClaims = claims
         Log.d(TAG, "license 啟用：${claims.email} tiers=${claims.tiers}")
         return claims
     }
 
-    fun clear(context: Context) = Prefs.clearLicense(context)
+    fun clear(context: Context) {
+        Prefs.clearLicense(context)
+        cachedRaw = null
+        cachedClaims = null
+    }
 
     /** 過期檢查：背景檢查時呼叫，過期就清掉 */
     fun purgeIfExpired(context: Context) {
@@ -135,6 +167,22 @@ object License {
     }
 
     // ---------------------------------------------------------------- 內部
+
+    /** 從原始授權碼重新驗簽並解析 claims；任何環節失敗都回傳 null */
+    private fun verifyRaw(raw: String): Claims? {
+        if (!configured()) return null
+        val parts = raw.trim().split(".")
+        if (parts.size != 2 || parts[0].isBlank() || parts[1].isBlank()) return null
+        val payload = b64(parts[0]) ?: return null
+        val sig = b64(parts[1]) ?: return null
+        val ok = Signature.getInstance("SHA256withRSA").run {
+            initVerify(publicKey())
+            update(payload)
+            verify(sig)
+        }
+        if (!ok) return null
+        return parseClaims(payload).takeIf { it.tiers.isNotEmpty() }
+    }
 
     private fun publicKey(): PublicKey {
         val der = b64(BuildConfig.LICENSE_PUBKEY)

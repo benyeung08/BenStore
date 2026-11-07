@@ -35,7 +35,14 @@ class UpdateWorker(appContext: Context, params: WorkerParameters) :
             val url = Prefs.repoUrl(ctx)
             // 每次都抓最新的 repo.json，否則永遠比不到新版本
             val repo = RepoStore.load(ctx, url, AuthSettings.token(ctx))
+
+            // 分級必須在背景鏈路也生效：原本這裡直接把 repo.apps 全部拿去比對，
+            // 未授權帳號會收到「看不到」的應用更新通知，autoInstall 開啟時
+            // 甚至會把那些 APK 抓下來送出安裝請求，等於繞過 UI 的門禁。
+            val account = Auth.current(ctx)
+            val tiers = Access.allTiers(ctx)
             val updates = UpdateScanner.scan(ctx, repo)
+                .filter { isVisibleTo(it.app, account, tiers) }
             Prefs.setLastCheck(ctx, System.currentTimeMillis())
 
             if (updates.isNotEmpty()) {

@@ -119,32 +119,21 @@ object Prefs {
 
     fun licenseRaw(c: Context): String? = sp(c).getString(K_LICENSE, null)
 
-    fun licenseClaims(c: Context): License.Claims? {
-        if (sp(c).getString(K_LICENSE, null).isNullOrBlank()) return null
-        val tiers = sp(c).getString(K_LIC_TIERS, null)
-            ?.split(",")?.map { it.trim().lowercase() }?.filter { it.isNotBlank() }
-            ?: return null
-        return License.Claims(
-            email = sp(c).getString(K_LIC_EMAIL, null) ?: "",
-            tiers = tiers,
-            issuedAt = 0L,
-            expiresAt = sp(c).getLong(K_LIC_EXP, 0L),
-            note = ""
-        )
-    }
-
-    fun setLicense(c: Context, raw: String, claims: License.Claims) {
-        sp(c).edit()
-            .putString(K_LICENSE, raw)
-            .putString(K_LIC_EMAIL, claims.email)
-            .putString(K_LIC_TIERS, claims.tiers.joinToString(","))
-            .putLong(K_LIC_EXP, claims.expiresAt)
-            .apply()
-    }
+    /**
+     * 只存使用者輸入的原始授權碼。
+     *
+     * 舊版還會把 email / tiers / exp 拆開存成明文，但 License.current()
+     * 直接讀那些欄位不驗簽，等於可以被篡改來繞過 RSA。現在 claims 一律由
+     * License.verifyRaw() 從這串 raw 重新驗簽解析，那些拆開的欄位不再寫入。
+     * clearLicense() 仍會移除舊欄位，相容從舊版升級上來的資料。
+     */
+    fun setLicense(c: Context, raw: String) =
+        sp(c).edit().putString(K_LICENSE, raw).apply()
 
     fun clearLicense(c: Context) {
         sp(c).edit()
             .remove(K_LICENSE)
+            // 舊版留下的明文欄位，升級後一併清掉，避免殘留資料被誤讀
             .remove(K_LIC_EMAIL)
             .remove(K_LIC_TIERS)
             .remove(K_LIC_EXP)

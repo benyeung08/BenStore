@@ -14,6 +14,7 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -177,8 +178,19 @@ object GoogleWebAuth {
 
     // ---------------------------------------------------------------- 本機一次性伺服器
 
+    /**
+     * 明確綁 IPv4 loopback。
+     *
+     * `ServerSocket(port)` 會綁 0.0.0.0（所有介面），同一個 Wi-Fi 上的
+     * 其他裝置也能連進來送假請求。redirect URI 用的是 127.0.0.1，
+     * 所以這裡必須固定 IPv4，不能用 getLoopbackAddress()（可能回 ::1，
+     * 瀏覽器連 127.0.0.1 反而連不上）。
+     */
+    private val IPV4_LOOPBACK: InetAddress =
+        InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+
     private fun canBind(port: Int): Boolean = try {
-        ServerSocket(port).use { true }
+        ServerSocket(port, 1, IPV4_LOOPBACK).use { true }
     } catch (t: Throwable) {
         false
     }
@@ -186,13 +198,15 @@ object GoogleWebAuth {
     /** 接住瀏覽器導回的授權碼，並回一個簡單頁面給瀏覽器顯示 */
     private fun waitForRedirect(port: Int): Pair<String?, String?> {
         val server = try {
-            ServerSocket(port)
+            ServerSocket(port, 1, IPV4_LOOPBACK)
         } catch (t: Throwable) {
             return null to null
         }
         return try {
             server.soTimeout = TIMEOUT_MS
             val socket = server.accept()
+            // 連上卻不發請求的連線不該把整個登入流程占住 180 秒
+            socket.soTimeout = 15_000
             try {
                 val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                 val requestLine = reader.readLine() ?: return (null to null)

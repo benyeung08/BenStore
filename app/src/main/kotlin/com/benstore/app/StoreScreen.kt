@@ -293,7 +293,8 @@ private fun MainScaffold(
 
                 TAB_UPDATES -> UpdatesScreen(
                     repo = repo,
-                    onOpen = { onOpenDetail(it.packageName) }
+                    onOpen = { onOpenDetail(it.packageName) },
+                    tiersTick = tiersTick
                 )
 
                 else -> SettingsScreen(
@@ -499,7 +500,7 @@ private fun AppRow(app: RepoApp, onClick: () -> Unit) {
 // ---------------------------------------------------------------- 更新
 
 @Composable
-private fun UpdatesScreen(repo: AppRepo, onOpen: (RepoApp) -> Unit) {
+private fun UpdatesScreen(repo: AppRepo, onOpen: (RepoApp) -> Unit, tiersTick: Int = 0) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -517,7 +518,13 @@ private fun UpdatesScreen(repo: AppRepo, onOpen: (RepoApp) -> Unit) {
         scope.launch {
             scanning = true
             val result = withContext(Dispatchers.Default) {
-                UpdateScanner.scanWithTracked(context, repo)
+                // 與背景 Worker 用同一套分級規則，否則「更新」分頁會列出
+                // 套用清單裡被隱藏的應用（名稱、版本、可一鍵安裝）。
+                val account = Auth.current(context)
+                val tiers = Access.allTiers(context)
+                UpdateScanner.scanWithTracked(context, repo) {
+                    isVisibleTo(it, account, tiers)
+                }
             }
             updates = result.first
             tracked = result.second
@@ -527,7 +534,8 @@ private fun UpdatesScreen(repo: AppRepo, onOpen: (RepoApp) -> Unit) {
         }
     }
 
-    LaunchedEffect(repo, refreshKey) { rescan() }
+    // 存取碼 / 授權碼兌換後要重新過濾，否則更新頁會停留在舊的可見集合
+    LaunchedEffect(repo, refreshKey, tiersTick) { rescan() }
 
     fun ensureInstallPermission(): Boolean {
         if (!RepoStore.canInstall(context)) {

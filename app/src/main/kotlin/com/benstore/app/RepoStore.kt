@@ -49,7 +49,13 @@ object RepoStore {
     }
     private val iconLock = Any()
 
-    private fun repoCache(context: Context): File = File(context.cacheDir, "repo.json")
+    /**
+     * 快取檔依資料源網址分開。
+     * 舊版只用一個 `repo.json`：換了新網址又剛好連不上時，會把**上一個**
+     * 資料源的內容當成這次的結果顯示，使用者以為切換成功，其實看到的是舊清單。
+     */
+    private fun repoCache(context: Context, url: String): File =
+        File(context.cacheDir, "repo-${md5(url).take(16)}.json")
     private fun iconDir(context: Context): File = File(context.cacheDir, "icons").apply { mkdirs() }
     private fun apkDir(context: Context): File = File(context.cacheDir, "apks").apply { mkdirs() }
 
@@ -75,13 +81,20 @@ object RepoStore {
                             else "HTTP ${response.code}"
                         )
                     }
-                    (response.body ?: error("回應為空")).string()
+                    val body = response.body ?: error("回應為空")
+                    // 原本用 body.string() 會把整個回應讀進記憶體。
+                    // 指到錯誤的檔案或惡意資料源時，幾百 MB 會在解析前就 OOM。
+                    val bytes = readCapped(body)
+                        ?: error(
+                            "資料源超過 ${MAX_RESPONSE_BYTES / 1024 / 1024} MB 上限，或內容為空"
+                        )
+                    String(bytes, Charsets.UTF_8)
                 }
             } catch (t: Throwable) {
                 // 協程被取消（例如使用者又換了一個資料源網址）時不能走快取回退，
                 // 否則取消掉的舊請求仍會把畫面更新成舊資料。
                 if (t is kotlinx.coroutines.CancellationException) throw t
-                val cached = repoCache(context)
+                val cached = repoCache(context, url)
                 val fallback = if (cached.exists()) {
                     runCatching { parseRepo(cached.readText(), url) }.getOrNull()
                 } else null
@@ -93,7 +106,7 @@ object RepoStore {
             }
 
             val parsed = parseRepo(text, url)
-            runCatching { repoCache(context).writeText(text) }
+            runCatching { repoCache(context, url).writeText(text) }
             repo = parsed
             parsed
         }
@@ -124,17 +137,17 @@ object RepoStore {
     }
 
     /**
-     * 單張圖示的下載上限（bytes）。
-     * `repo.json` 裡的 `icon` 可以是任意網址，原本直接 `body.bytes()`
-     * 把整個回應讀進記憶體 — 若指到一個幾百 MB 的檔案，解碼前就先 OOM 了。
-     * 這裡改成邊讀邊收，超過上限就放棄；圖示本來就不該超過 8 MB。
+     * 單次非 APK 回應的上限（bytes）：圖示與 repo.json 共用。
+     * 兩者原本都是直接 `body.bytes()` / `body.string()` 把整個回應讀進記憶體，
+     * 指到錯誤檔案或惡意資料源時，幾百 MB 會在解析前就 OOM。
+     * 8 MB 對圖示很寬裕，對 repo.json 也足以放數千筆應用。
      */
-    private const val ICON_MAX_BYTES = 8 * 1024 * 1024
+    private const val MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
-    /** 邊讀邊收，最多讀 [ICON_MAX_BYTES]；超過回傳 null */
+    /** 邊讀邊收，最多讀 [MAX_RESPONSE_BYTES]；超過回傳 null */
     private fun readCapped(body: okhttp3.ResponseBody): ByteArray? {
         val declared = body.contentLength()
-        if (declared > ICON_MAX_BYTES) return null
+        if (declared > MAX_RESPONSE_BYTES) return null
         val buf = ByteArray(64 * 1024)
         val out = java.io.ByteArrayOutputStream()
         var total = 0
@@ -143,7 +156,7 @@ object RepoStore {
                 val r = input.read(buf)
                 if (r <= 0) break
                 total += r
-                if (total > ICON_MAX_BYTES) return null
+                if (total > MAX_RESPONSE_BYTES) return null
                 out.write(buf, 0, r)
             }
         }
@@ -157,7 +170,7 @@ object RepoStore {
         synchronized(iconLock) { iconMem[url] }?.let { return@withContext it }
 
         val file = File(iconDir(context), md5(url) + ".icon")
-        if (file.exists() && file.length() > 0L && file.length() <= ICON_MAX_BYTES) {
+        if (file.exists() && file.length() > 0L && file.length() <= MAX_RESPONSE_BYTES) {
             val bytes = runCatching { file.readBytes() }.getOrNull()
             if (bytes != null && bytes.isNotEmpty()) {
                 decodeSampled(bytes, ICON_MAX_PX)?.let {
@@ -183,9 +196,36 @@ object RepoStore {
         }
     }
 
-    /** 已下載過的 APK 直接複用，不重複下載 */
-    fun localApk(context: Context, packageName: String, version: AppVersion): File =
-        File(apkDir(context), "${packageName.replace(Regex("[^A-Za-z0-9._]"), "_")}-${version.versionCode}.apk")
+    /** 快取檔名用的套件名前綴（去掉不合法字元） */
+    private fun safePkg(packageName: String): String =
+        packageName.replace(Regex("[^A-Za-z0-9._]"), "_")
+
+    /**
+     * 已下載過的 APK 直接複用，不重複下載。
+     *
+     * 檔名包含 url + sha256 的摘要：舊版只用「包名 + versionCode」，
+     * 若同一個版本號重新構建過 APK（換了下載網址、但 sha256 留空），
+     * 會一直命中舊快取，使用者永遠裝到舊包。
+     */
+    fun localApk(context: Context, packageName: String, version: AppVersion): File {
+        val tag = md5(version.url + "|" + version.githubAsset?.assetId + "|" + version.sha256)
+            .take(10)
+        return File(apkDir(context), "${safePkg(packageName)}-${version.versionCode}-$tag.apk")
+    }
+
+    /**
+     * 下載成功後清掉同套件的舊快取，避免 cacheDir/apks 無限長大。
+     * 只清「60 秒前」的檔案：另一個協程可能正同時下載同套件另一版本，
+     * 剛寫好的 out 不能被這裡刪掉。暫存檔由各自的 finally 清理，不在此處理。
+     */
+    private fun pruneOldApks(dir: File, packageName: String, keep: File) {
+        val prefix = "${safePkg(packageName)}-"
+        val cutoff = System.currentTimeMillis() - 60_000L
+        dir.listFiles { f ->
+            f.isFile && f.name.startsWith(prefix) && f.name.endsWith(".apk") &&
+                f.absolutePath != keep.absolutePath && f.lastModified() < cutoff
+        }?.forEach { runCatching { it.delete() } }
+    }
 
     /**
      * 下載 APK（有 sha256 就驗證），回傳檔案。
@@ -214,22 +254,31 @@ object RepoStore {
             out.delete()   // 快取內容與校驗值不符，重新下載
         }
 
-        val tmp = File(out.parentFile, out.name + ".part")
-        fetchTo(version, token, tmp) { d, t ->
-            withContext(Dispatchers.Main) { onProgress(d, t) }
-        }
-        if (out.exists()) out.delete()
-        if (!tmp.renameTo(out)) tmp.copyTo(out, overwrite = true)
-        tmp.delete()
-
-        if (version.sha256.isNotBlank()) {
-            val actual = sha256Of(out)
-            if (!actual.equals(version.sha256, true)) {
-                out.delete()
-                error("SHA-256 不符：\n期望 ${version.sha256}\n實際 $actual")
+        // 唯一暫存檔：兩個協程同時下載同一版本（例如批次更新 + 背景檢查）
+        // 原本會寫同一個 .part 互相覆蓋，SHA 校驗隨機失敗；失敗時檔案還會殘留。
+        val tmp = File(
+            out.parentFile,
+            out.name + ".part." + java.util.UUID.randomUUID().toString()
+        )
+        try {
+            fetchTo(version, token, tmp) { d, t ->
+                withContext(Dispatchers.Main) { onProgress(d, t) }
             }
+            if (out.exists()) out.delete()
+            if (!tmp.renameTo(out)) tmp.copyTo(out, overwrite = true)
+
+            if (version.sha256.isNotBlank()) {
+                val actual = sha256Of(out)
+                if (!actual.equals(version.sha256, true)) {
+                    out.delete()
+                    error("SHA-256 不符：\n期望 ${version.sha256}\n實際 $actual")
+                }
+            }
+            pruneOldApks(apkDir(context), packageName, out)
+            out
+        } finally {
+            tmp.delete()
         }
-        out
     }
 
     /**

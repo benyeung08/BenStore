@@ -81,7 +81,11 @@ object UpdateScanner {
      * `getInstalledPackages()` 是幾十毫秒等級的呼叫，原本 UI 分別呼叫
      * [scan] 與 [trackedCount] 會列舉兩次；這裡只列舉一次。
      */
-    fun scanWithTracked(context: Context, repo: AppRepo): Pair<List<AppUpdate>, Int> {
+    fun scanWithTracked(
+        context: Context,
+        repo: AppRepo,
+        visible: (RepoApp) -> Boolean = { true }
+    ): Pair<List<AppUpdate>, Int> {
         val installed = installed(context)
         val ignored = Prefs.ignored(context)
         val self = context.packageName
@@ -91,6 +95,9 @@ object UpdateScanner {
         var tracked = 0
         for (app in repo.apps) {
             if (app.packageName == self) continue
+            // 分級不過濾的話，UI 只擋住列表，更新頁與背景通知卻會把
+            // 無權使用的應用（名稱、版本）全部洩漏出來，甚至自動安裝。
+            if (!visible(app)) continue
             val inst = installed[app.packageName] ?: continue
             tracked++
 

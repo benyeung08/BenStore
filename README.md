@@ -59,6 +59,7 @@ Kotlin + Jetpack Compose，單模組約 2000 行，Push 到 GitHub 就由 Action
 - 安裝時系統會擋：點「設定」→ 對你的瀏覽器/檔案管理員開啟「允許安裝未知應用程式」。
 - 首次開啟會載入預設資料源。若網址還是範例的 `<your-account>`，會載入失敗——這是正常的，進「設定」改成你自己的 `repo.json` 網址即可（見下一節）。
 - 點進任一個應用 → 「下載並安裝」→ 第一次會跳出系統授權頁，勾選「允許來自此來源」後再按一次即可。
+- **Release 與 Debug 二選一，不能共存也不能互相升級**：兩個 APK 的 `applicationId` 都是 `com.benstore.app`，但一個用你的正式金鑰、一個用 Android debug 金鑰，簽名不同。Android 會拒絕覆蓋安裝並回報「簽名衝突」。要換版本請先解除安裝。測試用 debug、正式發布請一律用 release。
 
 ## 三、資料源格式（repo.json）
 
@@ -815,10 +816,25 @@ keytool -genkeypair -v -keystore my-release.jks -alias benstore \
 base64 -w 0 my-release.jks > my-release.jks.b64
 ```
 
-到 GitHub 倉庫 **Settings → Secrets and variables → Actions** 新增 4 個 secret：
-`KEYSTORE_BASE64`、`KEYSTORE_ALIAS`、`KEYSTORE_STORE_PASSWORD`、`KEYSTORE_KEY_PASSWORD`。
+到 GitHub 倉庫 **Settings → Secrets and variables → Actions** 新增 secret。
+
+**A. 簽名用（4 個）**
+
+`KEYSTORE_BASE64`、`KEYSTORE_ALIAS`、`KEYSTORE_STORE_PASSWORD`、`KEYSTORE_KEY_PASSWORD`
 
 下次 Actions 就會用你的金鑰簽名，升級不掉資料。金鑰檔本身請另外備份，不要進 repo。
+
+**B. 編譯期設定（4 個，沒設也能編，但功能會停用）**
+
+`WEB_CLIENT_ID`、`ALLOWED_EMAILS`、`GOOGLE_CLIENT_SECRET`、`LICENSE_PUBKEY`
+
+> ⚠️ 這一組很關鍵：`app/build.gradle.kts` 的 `sec()` 是讀**環境變數**，
+> GitHub Secrets 並不會自動變成環境變數。兩個 workflow 都已經在
+> `Build Debug + Release` 步驟 explicit `env:` 注入這 4 個值。
+> 少了這段，就算你在 Secrets 裡填了 `WEB_CLIENT_ID`，編出來的 APK 裡仍是空字串，
+> Google 登入會直接停用（強制登入模式下就只剩本機帳號可用）。
+
+Workflows 會在 build log 印出 `WEB_CLIENT_ID 已設定: 是/否`，方便確認有沒有帶進去（不會印出值本身）。
 
 ## 十一、發一個正式版本
 
@@ -837,12 +853,13 @@ base64 -w 0 my-release.jks > my-release.jks.b64
 
 `Release` workflow 會自動做完這些事：
 
-1. 把 `build.gradle.kts` 的 `versionName` 改成 `1.0.1`、`versionCode` 改成該次 run 編號，並 commit 回 main
-2. 編譯 Debug + Release
-3. 用你的金鑰簽名（沒設 secret 就用測試金鑰，並在 log 裡警告）
-4. 產生 `SHA256SUMS.txt`
-5. 建立並推送 `v1.0.1` tag（若已存在則更新該 Release，不會報錯）
-6. 發布 Release，附上兩個 APK + 校驗檔
+1. 把 `build.gradle.kts` 的 `versionName` 改成 `1.0.1`，`versionCode` 取「目前值 + 1」與 run 編號的較大者（保證單調遞增，不會比已發布版本還小），並 commit 回 main
+2. 明確安裝 `platforms;android-34` + `build-tools;34.0.0`（runner 預裝 SDK 版本會變動，不保证一定有 34）
+3. 編譯 Debug + Release（並注入 4 個登入相關 secret）
+4. 用你的金鑰簽名（沒設 secret 就用測試金鑰，並在 log 裡警告）
+5. 產生 `SHA256SUMS.txt`
+6. 建立／強制更新 `v1.0.1` tag 到本次 commit（重跑同 tag 時 Release 與原始碼版本才會一致）
+7. 發布 Release，附上兩個 APK + 校驗檔
 
 ### Release 正文從哪來
 

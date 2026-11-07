@@ -90,8 +90,13 @@ private const val TAB_APPS = 0
 private const val TAB_UPDATES = 1
 private const val TAB_SETTINGS = 2
 
+/**
+ * Android 13+ 的通知權限請求。
+ * 已往上移到 MainActivity 的門禁之前，這裡不要再呼叫一次，
+ * 否則切換分頁/重組時可能重複彈出。
+ */
 @Composable
-private fun RequestNotificationPermissionIfNeeded() {
+fun RequestNotificationPermissionIfNeeded() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
     val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
@@ -112,7 +117,6 @@ fun StoreApp(startTab: Int = TAB_APPS) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    RequestNotificationPermissionIfNeeded()
     LaunchedEffect(Unit) { Notifier.createChannels(context) }
 
     var repoUrl by remember { mutableStateOf(Prefs.repoUrl(context)) }

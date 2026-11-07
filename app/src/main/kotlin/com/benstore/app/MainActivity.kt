@@ -29,6 +29,12 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             BenStoreTheme {
+                // 放在門禁之前：強制登入模式下使用者第一次開 App 只會看到
+                // LockScreen，若把權限請求留在 StoreApp，Android 13+ 要等登入後
+                // 才會詢問；而 UpdateScheduler 在 onCreate 就排程了，
+                // 登入前的背景檢查通知會全部靜默丟失。
+                RequestNotificationPermissionIfNeeded()
+
                 val account = androidx.compose.runtime.remember(authTick) {
                     Auth.current(this@MainActivity)
                 }

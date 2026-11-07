@@ -11,10 +11,16 @@ BenStore 是一個完全由你掌控的 Android 應用商店，**不依賴 F-Dro
 > **後續修訂（同一版本號）**：分級規則現在也套用到「更新」分頁與背景檢查／自動安裝；
 > 離線授權碼改為每次重新驗簽；資料源快取依網址分開；repo.json 與圖示加上大小上限；
 > OAuth 回呼伺服器只綁 127.0.0.1；APK 下載暫存檔與快取鍵修正。
-> **Post-release fixes (same version)**: tiering now also applies to the Updates tab and
-> background checks; license codes are re-verified on every read; catalog cache is keyed by URL;
+> 再修正：背景排程不再被每次開 App 重置、手動檢查不受「僅 Wi-Fi」擋下、
+> 永久性錯誤不再無限重試、Device Flow 輪詢可容忍單次網路抖動、
+> 安裝結果通知保留應用名、重複點通知可切回更新分頁。
+> **Post-release fixes (same version)**: tiering now applies to the Updates tab and
+> background checks; license codes re-verified on every read; catalog cache keyed by URL;
 > size caps on catalog and icons; OAuth loopback bound to 127.0.0.1 only; APK download
-> temp-file and cache-key fixes.
+> temp-file and cache-key fixes. Also: periodic work is no longer reset on every app launch,
+> manual checks bypass the Wi-Fi-only gate, permanent failures stop retrying, Device Flow
+> polling tolerates transient network errors, install-result notifications keep the app name,
+> and tapping a notification again returns to the Updates tab.
 
 ### 強制登入 / Mandatory sign-in
 
